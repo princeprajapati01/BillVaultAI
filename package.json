@@ -1,0 +1,16 @@
+{
+  "name": "ocr-bill-suite",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Unified workspace coordinating the FastAPI backend, Next.js user frontend, and Next.js admin dashboard.",
+  "scripts": {
+    "install-all": "npm install && npm install --prefix frontend-user && npm install --prefix frontend-admin",
+    "backend-dev": "cd backend && .venv\\Scripts\\python.exe -m uvicorn app.main:app --reload --port 8000",
+    "frontend-user-dev": "npm run dev --prefix frontend-user",
+    "frontend-admin-dev": "npm run dev --prefix frontend-admin",
+    "dev": "concurrently --kill-others --names \"BACKEND,USER-FE,ADMIN-FE\" -c \"bgBlue,bgGreen,bgMagenta\" \"npm run backend-dev\" \"npm run frontend-user-dev\" \"npm run frontend-admin-dev\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
