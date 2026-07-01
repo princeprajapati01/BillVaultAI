@@ -187,6 +187,9 @@ class RankingEngine:
         if field_name in {"invoice_total"}:
             # Key bugfix: prefer "Grand Total" over other totals (e.g., taxable value, gross, discount).
             raw = (c.raw_value or "").lower()
+            if re.search(r'\bsub[\s-]*total\b', raw):
+                bonus -= 40.0
+                parts.append("IsSubTotal")
             if "grand total" in raw:
                 bonus += 25.0
                 parts.append("GrandKW")
@@ -327,6 +330,16 @@ class RankingEngine:
 
         # prefer larger totals among amount candidates (helps avoid picking smaller intermediate values)
         if field_name in {"invoice_total"}:
+            try:
+                bd = ctx.get("balance_due")
+                cand_f = float(c.value)
+                if bd is not None:
+                    bd_f = float(bd)
+                    if bd_f > 0 and abs(bd_f - cand_f) < 0.02:
+                        bonus += 30.0
+                        parts.append("BalDueMatch")
+            except Exception:
+                pass
             try:
                 total = float(c.value)
                 bonus += 5.0 * (1.0 - math.exp(-total / 5000.0))

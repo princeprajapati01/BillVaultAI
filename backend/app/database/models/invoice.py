@@ -18,7 +18,7 @@ class Bill(Base):
     invoice_date = Column(String(100), nullable=True)
     gst_number = Column(String(100), nullable=True)
     subtotal = Column(Float, nullable=True, default=0.0)
-    payment_method = Column(String(100), nullable=True)
+    payment_method = Column(String(255), nullable=True)
     transaction_id = Column(String(100), nullable=True)
     notes = Column(Text, nullable=True)
     confidence_score = Column(Float, nullable=True, default=1.0)

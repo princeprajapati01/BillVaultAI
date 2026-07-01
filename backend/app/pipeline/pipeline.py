@@ -4,6 +4,7 @@ from typing import Dict, Any
 from app.pipeline.detector import YOLODetector, DetectedRegion
 from app.pipeline.ocr_engine import OCREngine
 from app.pipeline.semantic_engine import SemanticEngine
+from app.core.config import HUGGINGFACE_API_KEY
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -81,8 +82,17 @@ class IDPPipeline:
         raw_ocr_text = "\n".join([r.text for r in sorted_ocr if r.text.strip()])
 
         # Step 3: Semantic Engine classification
-        engine = SemanticEngine(image.shape)
-        classified_fields = engine.classify(ocr_results)
+        from app.pipeline.llm_engine import extract_with_huggingface
+        
+        classified_fields = None
+        if HUGGINGFACE_API_KEY:
+            logger.info("Attempting Hugging Face LLM extraction...")
+            classified_fields = extract_with_huggingface(image_path, raw_ocr_text)
+            
+        if classified_fields is None:
+            logger.info("Falling back to rule-based SemanticEngine classification...")
+            engine = SemanticEngine(image.shape)
+            classified_fields = engine.classify(ocr_results)
 
         return {
             'status': 'success',

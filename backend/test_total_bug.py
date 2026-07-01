@@ -216,6 +216,56 @@ def test_total_extraction():
     print("Test 7 passed: Total Amount Due correctly resolved to 1248.50 even with late fee of 2% and 14 days terms present!")
 
 
+def test_zylker_invoice_field_placement():
+    """Zylker-style US invoice: vendor name, subtotal vs total, balance due reconciliation."""
+    ocr_results = [
+        OCRResult(1, "Zylker Masterworks", 1.00, (50, 20, 200, 35), "unmapped_ocr"),
+        OCRResult(2, "148, Northern Street", 0.98, (50, 40, 200, 55), "unmapped_ocr"),
+        OCRResult(3, "New York10001", 0.97, (50, 80, 180, 95), "unmapped_ocr"),
+        OCRResult(4, "INVOICE", 1.00, (300, 60, 360, 75), "unmapped_ocr"),
+        OCRResult(5, "INV-000001", 0.98, (400, 50, 480, 65), "unmapped_ocr"),
+        OCRResult(6, "Invoice Date", 0.95, (50, 140, 120, 155), "unmapped_ocr"),
+        OCRResult(7, "01 Jun 2024", 0.94, (130, 140, 210, 155), "unmapped_ocr"),
+        OCRResult(8, "Due Date", 0.91, (250, 140, 310, 155), "unmapped_ocr"),
+        OCRResult(9, "01 Jul 2024", 0.94, (320, 140, 400, 155), "unmapped_ocr"),
+        OCRResult(10, "6,480.00", 0.95, (389, 421, 420, 430), "unmapped_ocr"),
+        OCRResult(11, "Sub Total", 0.95, (304, 422, 335, 430), "unmapped_ocr"),
+        OCRResult(12, "Total", 0.95, (316, 473, 335, 482), "unmapped_ocr"),
+        OCRResult(13, "$7,200.32", 0.95, (385, 473, 420, 482), "unmapped_ocr"),
+        OCRResult(14, "Balance Due", 0.95, (292, 491, 335, 500), "unmapped_ocr"),
+        OCRResult(15, "$7,200.32", 0.95, (385, 491, 419, 499), "unmapped_ocr"),
+    ]
+
+    engine = SemanticEngine((550, 520, 3))
+    classified = engine.classify(ocr_results)
+
+    vendor = classified.get("vendor", {}).get("vendor_name", {}).get("value")
+    subtotal = classified.get("amounts", {}).get("subtotal", {}).get("value")
+    grand_total = classified.get("amounts", {}).get("grand_total", {}).get("value")
+    balance_due = classified.get("payment", {}).get("balance_due", {}).get("value")
+    inv_date = classified.get("invoice_details", {}).get("invoice_date", {}).get("value")
+    payment_method = classified.get("payment", {}).get("payment_method", {}).get("value")
+    currency = classified.get("currency")
+
+    print("\n=== ZYLKER FIELD PLACEMENT TEST ===")
+    print(f"Vendor: {vendor}")
+    print(f"Subtotal: {subtotal}")
+    print(f"Grand Total: {grand_total}")
+    print(f"Balance Due: {balance_due}")
+    print(f"Invoice Date: {inv_date}")
+    print(f"Payment Method: {payment_method}")
+    print(f"Currency: {currency}")
+
+    assert vendor == "Zylker Masterworks", f"Expected vendor Zylker Masterworks, got {vendor}"
+    assert subtotal == 6480.0, f"Expected subtotal 6480.0, got {subtotal}"
+    assert grand_total == 7200.32, f"Expected grand total 7200.32, got {grand_total}"
+    assert balance_due == 7200.32, f"Expected balance due 7200.32, got {balance_due}"
+    assert inv_date == "01/06/2024", f"Expected invoice date 01/06/2024, got {inv_date}"
+    assert payment_method is None, f"Expected no default payment method, got {payment_method}"
+    assert currency == "USD", f"Expected USD currency, got {currency}"
+    print("Zylker field placement test passed!")
+
+
 
 def test_date_and_invoice_number_extraction():
     engine = SemanticEngine((1000, 800, 3))
@@ -274,3 +324,4 @@ def test_date_and_invoice_number_extraction():
 if __name__ == "__main__":
     test_total_extraction()
     test_date_and_invoice_number_extraction()
+    test_zylker_invoice_field_placement()

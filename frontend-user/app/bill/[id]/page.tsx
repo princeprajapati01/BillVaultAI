@@ -24,6 +24,14 @@ import {
   Tag
 } from 'lucide-react'
 
+function formatCurrency(amount: number | undefined | null, currency: string = 'INR'): string {
+  const val = Number(amount ?? 0)
+  if (currency === 'USD') return `$${val.toFixed(2)}`
+  if (currency === 'EUR') return `€${val.toFixed(2)}`
+  if (currency === 'GBP') return `£${val.toFixed(2)}`
+  return `₹${val.toFixed(2)}`
+}
+
 export default function BillDetailScreen() {
   const router = useRouter()
   const params = useParams()
@@ -77,11 +85,13 @@ export default function BillDetailScreen() {
         }
 
         const data = await res.json()
+        const currency = data.currency || 'INR'
         
         setBill({
           id: data.id,
           merchant: data.merchant,
           amount: data.amount,
+          currency,
           gst: data.gst,
           cgst: data.cgst || 0.0,
           sgst: data.sgst || 0.0,
@@ -111,19 +121,19 @@ export default function BillDetailScreen() {
           { key: 'invoice_number', label: 'Invoice Number', value: data.invoiceNumber || '', confidence: data.confidence || 95, icon: Hash },
           { key: 'invoice_date', label: 'Invoice Date', value: data.date || '', confidence: data.confidence || 95, icon: Calendar },
           { key: 'gst_number', label: 'GST Number', value: data.gstNumber || '', confidence: data.confidence || 95, icon: Receipt },
-          { key: 'subtotal', label: 'Subtotal', value: data.subtotal !== undefined ? `₹${Number(data.subtotal).toFixed(2)}` : '₹0.00', confidence: data.confidence || 95, icon: DollarSign },
-          { key: 'cgst_amount', label: 'CGST', value: data.cgst !== undefined ? `₹${Number(data.cgst).toFixed(2)}` : '₹0.00', confidence: data.confidence || 95, icon: Receipt },
-          { key: 'sgst_amount', label: 'SGST', value: data.sgst !== undefined ? `₹${Number(data.sgst).toFixed(2)}` : '₹0.00', confidence: data.confidence || 95, icon: Receipt },
-          { key: 'igst_amount', label: 'IGST', value: data.igst !== undefined ? `₹${Number(data.igst).toFixed(2)}` : '₹0.00', confidence: data.confidence || 95, icon: Receipt },
-          { key: 'tax_amount', label: 'Tax Amount', value: data.gst !== undefined ? `₹${Number(data.gst).toFixed(2)}` : '₹0.00', confidence: data.confidence || 95, icon: Receipt },
-          { key: 'invoice_total', label: 'Total Amount', value: data.amount !== undefined ? `₹${Number(data.amount).toFixed(2)}` : '₹0.00', confidence: data.confidence || 95, icon: DollarSign },
+          { key: 'subtotal', label: 'Subtotal', value: formatCurrency(data.subtotal, currency), confidence: data.confidence || 95, icon: DollarSign },
+          { key: 'cgst_amount', label: 'CGST', value: formatCurrency(data.cgst, currency), confidence: data.confidence || 95, icon: Receipt },
+          { key: 'sgst_amount', label: 'SGST', value: formatCurrency(data.sgst, currency), confidence: data.confidence || 95, icon: Receipt },
+          { key: 'igst_amount', label: 'IGST', value: formatCurrency(data.igst, currency), confidence: data.confidence || 95, icon: Receipt },
+          { key: 'tax_amount', label: 'Tax Amount', value: formatCurrency(data.gst, currency), confidence: data.confidence || 95, icon: Receipt },
+          { key: 'invoice_total', label: 'Total Amount', value: formatCurrency(data.amount, currency), confidence: data.confidence || 95, icon: DollarSign },
           { key: 'due_date', label: 'Due Date (dd/mm/yyyy)', value: data.dueDate || '', confidence: data.confidence || 95, icon: Calendar },
           { key: 'payment_terms', label: 'Payment Terms', value: data.paymentTerms || '', confidence: data.confidence || 95, icon: FileText },
-          { key: 'balance_due', label: 'Balance Due', value: data.balanceDue !== undefined ? `₹${Number(data.balanceDue).toFixed(2)}` : '₹0.00', confidence: data.confidence || 95, icon: DollarSign },
-          { key: 'amount_paid', label: 'Amount Paid', value: data.amountPaid !== undefined ? `₹${Number(data.amountPaid).toFixed(2)}` : '₹0.00', confidence: data.confidence || 95, icon: DollarSign },
+          { key: 'balance_due', label: 'Balance Due', value: formatCurrency(data.balanceDue, currency), confidence: data.confidence || 95, icon: DollarSign },
+          { key: 'amount_paid', label: 'Amount Paid', value: formatCurrency(data.amountPaid, currency), confidence: data.confidence || 95, icon: DollarSign },
           { key: 'payment_status', label: 'Payment Status', value: data.paymentStatus || 'UNKNOWN', confidence: data.confidence || 95, icon: CheckCircle2 },
           { key: 'status_reason', label: 'Status Reason', value: data.statusReason || '', confidence: data.confidence || 95, icon: FileText },
-          { key: 'payment_method', label: 'Payment Method', value: data.paymentMethod || '', confidence: data.confidence || 95, icon: CreditCard },
+          { key: 'payment_method', label: 'Payment Method', value: data.paymentMethod || 'Not detected', confidence: data.confidence || 95, icon: CreditCard },
           { key: 'transaction_id', label: 'Transaction ID', value: data.transactionId || '', confidence: data.confidence || 95, icon: Hash },
           { key: 'category', label: 'Expense Category', value: data.category || 'Office', confidence: data.confidence || 95, icon: Tag },
           { key: 'notes', label: 'Notes', value: data.notes || '', confidence: data.confidence || 95, icon: FileText }

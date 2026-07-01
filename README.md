@@ -1,25 +1,59 @@
 # 📊 billvalutAI
 
-Welcome to the unified master repository for the **Aura Intelligent OCR Billing Suite**. This suite is a world-class, enterprise-grade Intelligent Document Processing (IDP) system that automates billing and invoice processing. 
+## 🌟 Overview: What is BillVaultAI?
+**BillVaultAI** (Aura Billing Suite) is an enterprise-grade, end-to-end **Intelligent Document Processing (IDP) system** designed to automate invoice ingestion, validation, and analytics. It eliminates manual data entry by extracting structured, verified JSON data from complex invoices, bills, and retail receipts.
 
-By combining a high-performance **FastAPI backend** (driven by YOLOv8 layout detection and PaddleOCR text extraction) with two custom **Next.js frontend portals** (User Billing Vault & Admin Dashboard), Aura provides a comprehensive solution for invoice ingestion, validation, categorization, and business metrics tracking.
+The system is structured as a unified monorepo:
+1. **FastAPI Backend**: The AI brain that handles image preprocessing, OCR, deep learning segmentation, and LLM classification.
+2. **User Billing Portal (`frontend-user`)**: A sleek, glassmorphic Next.js portal where users can upload receipts, edit extracted values, and view rich financial graphs.
+3. **Admin Dashboard (`frontend-admin`)**: A control panel for system administration, offering real-time throughput metrics, server health stats, and data accuracy tracking.
+
+---
+
+## ⚙️ How It Works
+When a user uploads an invoice, the system processes it through a highly optimized pipeline:
+1. **Layout Detection (YOLOv8)**: Segments the invoice into structured zones (header, tables, footers).
+2. **OCR Ingestion (PaddleOCR)**: Extracts raw text and coordinates from the detected zones.
+3. **AI-Enhanced Processing (Qwen2.5-VL / Semantic Engine)**:
+   * **With HF API Key**: Uses the state-of-the-art `Qwen2.5-VL-72B-Instruct` model to analyze visual structures and text simultaneously.
+   * **Without HF API Key (Fallback)**: Falls back automatically to a local, PyTorch-powered 13-step layout matching rules engine.
+4. **Auto-Correction & Database Sync**: Reconciles amounts (e.g. Subtotal + Tax = Grand Total) to fix OCR errors, then saves everything to a MySQL database.
+
+---
+
+## 🚀 How to Use It
+
+### For Users (Uploading & Managing Invoices)
+1. **Login**: Go to the User Portal (`http://localhost:3000`), enter your email, and receive an instant OTP via SMTP to log in passwordlessly.
+2. **Upload Invoices**: Drag and drop any image (PNG, JPG, etc.). The dashboard will display a processing spinner while the backend reads it.
+3. **Review & Edit**: Open the invoice in the list, verify the values (Vendor, Amount, GST, etc.), and use the inline editor to make adjustments.
+4. **Track Spending**: View dynamic charts showing monthly spending breakdowns and business category distributions.
+
+### For Admins (Monitoring Pipeline)
+1. **Admin Panel**: Log in to the Admin Dashboard (`http://localhost:3001`).
+2. **System Health**: Monitor live CPU/RAM usage, database query latencies, and API endpoint performance.
+3. **Inference Queue**: View active jobs, confidence scores, and manual review flags.
+4. **Accuracy Audits**: Track real-time accuracy rates for key invoice fields (e.g., Invoice Number, Vendor Name, Tax Amounts).
 
 ---
 
 ## 🏗️ System Architecture
 
-The following diagram illustrates how the ingestion, processing, and visualization layers interact with the database:
+The following diagram illustrates how the ingestion, processing, and visualization layers interact with the database, including the fail-safe LLM extraction path:
 
 ```mermaid
 graph TD
     A[Invoice Image/PDF Upload] -->|POST /api/invoices/upload| B(FastAPI Backend)
     B --> C[YOLOv8 Layout Detector]
     C -->|Segment Bounding Boxes| D[PaddleOCR Engine]
-    D -->|Text & Coordinates| E[13-Step Semantic Engine]
-    E -->|PyTorch Similarity Category/Fields| F[Validation & Auto-Repairs]
-    F -->|Structured JSON Output| G[(MySQL/MariaDB Database)]
-    G -->|Real-time Stats & Auditing| H[Next.js Admin Dashboard]
-    G -->|User Spending & History| I[Next.js User Bill Vault]
+    D -->|Text & Coordinates| E{Hugging Face Key Set?}
+    E -->|Yes| F[Qwen2.5-VL Multimodal LLM]
+    E -->|No / API Error| G[13-Step Semantic Engine]
+    F -->|Raw JSON Mapping| H[Validation & Auto-Repairs]
+    G -->|Extract & Map Fields| H
+    H -->|Structured JSON Output| I[(MySQL/MariaDB Database)]
+    I -->|Real-time Stats & Auditing| J[Next.js Admin Dashboard]
+    I -->|User Spending & History| K[Next.js User Bill Vault]
 ```
 
 ---
@@ -59,7 +93,16 @@ main_phase/
 
 ## 🤖 Deep-Dive: AI Extraction Pipeline
 
-The core intelligence resides in `backend/app/pipeline/`. When an invoice image is uploaded, it goes through a **13-Step Ingestion & Intelligence Pipeline** managed by the `SemanticEngine`:
+The core intelligence resides in `backend/app/pipeline/`. When an invoice image is uploaded, it goes through a dual-mode ingestion and processing flow:
+
+### 1. AI-Enhanced Extraction (Qwen2.5-VL-72B-Instruct)
+When `HUGGINGFACE_API_KEY` is configured, the system routes the preprocessed document image (base64 Data URL) and raw PaddleOCR text to the Qwen2.5-VL-72B multimodal model via the Hugging Face Serverless Inference API.
+* **Multimodal Reasoning**: Utilizes both visual layout relationships and raw text inputs to deliver exceptional key-value and tabular extraction.
+* **Strict Schema Enforcement**: The prompt enforces a strict JSON schema, which is parsed, cleaned, and mapped back to the system's exact database structure.
+* **Auto-Truncation**: Long free-text values (e.g. detailed bank account credentials under `payment_method`) are safely truncated to fit column boundaries (250 chars max).
+
+### 2. Native Rules-Based Extraction (SemanticEngine)
+If the Hugging Face API key is missing, rate-limited, or returns an error, the pipeline immediately triggers a **transparent fail-safe fallback** to the built-in **13-Step Ingestion & Intelligence Pipeline** managed by the `SemanticEngine`:
 
 ```
 [Upload] ➔ 1. OCR Line Analysis ➔ 2. Doc Type Detection ➔ 3. Vendor Extraction
@@ -69,7 +112,7 @@ The core intelligence resides in `backend/app/pipeline/`. When an invoice image 
          ➔ 13. Output JSON Formatting
 ```
 
-### The 13 Pipeline Steps
+### The 13 Pipeline Steps (Fallback Engine)
 1. **OCR Line Analysis**: Sorts and groups OCR bounding boxes into distinct physical rows based on $y$-coordinate tolerances to preserve horizontal text reading.
 2. **Document Type Detection**: Analyzes keyword densities to determine if the document is an `INVOICE`, `RECEIPT`, or `BILL`.
 3. **Vendor Extraction**: Identifies the vendor/merchant name using frequency analysis, layout hierarchy (top of the page), and regex exclusions.
@@ -220,6 +263,11 @@ SMTP_PORT=587
 SMTP_USER=your_email@gmail.com
 SMTP_PASS=your_app_password
 SMTP_FROM=your_email@gmail.com
+
+# Hugging Face Configurations (Optional - Fallback Engine used if omitted)
+# A token with at least 'READ' permission is required to query Hugging Face.
+HUGGINGFACE_API_KEY=hf_your_actual_token_here
+HUGGINGFACE_MODEL=Qwen/Qwen2.5-VL-72B-Instruct
 ```
 
 ### User Frontend Environment Variables (`frontend-user/.env.local`)

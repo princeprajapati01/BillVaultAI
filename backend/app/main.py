@@ -52,7 +52,7 @@ def startup_event():
             columns_to_add = [
                 ("gst_number", "VARCHAR(100) NULL"),
                 ("subtotal", "DOUBLE NULL"),
-                ("payment_method", "VARCHAR(100) NULL"),
+                ("payment_method", "VARCHAR(255) NULL"),
                 ("transaction_id", "VARCHAR(100) NULL"),
                 ("notes", "TEXT NULL"),
                 ("due_date", "VARCHAR(100) NULL"),
@@ -69,7 +69,14 @@ def startup_event():
                     logger.info(f"Migration: added column {col_name} to bills table.")
                 except Exception as e:
                     db_migration.rollback()
-                    logger.debug(f"Migration: column {col_name} check: {e}")
+                    # Try to modify column type/size if it already exists
+                    try:
+                        db_migration.execute(text(f"ALTER TABLE bills MODIFY COLUMN {col_name} {col_type}"))
+                        db_migration.commit()
+                        logger.info(f"Migration: modified column {col_name} in bills table.")
+                    except Exception as mod_e:
+                        db_migration.rollback()
+                        logger.debug(f"Migration: column {col_name} check: {e} | modify check: {mod_e}")
         except Exception as me:
             logger.error(f"Migration error: {me}")
         finally:

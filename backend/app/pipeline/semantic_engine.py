@@ -201,11 +201,119 @@ def normalize_invoice_number(inv_str: str) -> str:
     # Correct common prefix OCR typos (1NV-, lNV- -> INV-)
     m = re.match(r'^[1l]nv-', inv_str, re.IGNORECASE)
     if m:
-        return 'INV-' + inv_str[4:]
-    m2 = re.match(r'^[1l]nv(\d+)', inv_str, re.IGNORECASE)
-    if m2:
-        return 'INV' + m2.group(1)
+        inv_str = 'INV-' + inv_str[4:]
+    else:
+        m2 = re.match(r'^[1l]nv(\d+)', inv_str, re.IGNORECASE)
+        if m2:
+            inv_str = 'INV' + m2.group(1)
+
+    # Correct letter O/l mistaken for zero/one in the numeric suffix (e.g. INV-O00001 -> INV-000001)
+    inv_match = re.match(r'^((?:INV|inv|Inv)[- ]?)(.+)$', inv_str)
+    if inv_match:
+        prefix, suffix = inv_match.group(1), inv_match.group(2)
+        suffix = re.sub(r'[Oo]', '0', suffix)
+        inv_str = prefix + suffix
     return inv_str
+
+
+_ADDRESS_WORD_PATTERN = re.compile(
+    r'\b(?:street|st\.|road|rd\.|avenue|ave\.|lane|blvd|boulevard|drive|dr\.|'
+    r'floor|building|nagar|district|state|city|zip|pincode|gstin)\b',
+    re.IGNORECASE,
+)
+
+
+def _is_subtotal_label(text_lower: str) -> bool:
+    return bool(re.search(r'\bsub[\s-]*total\b', text_lower))
+
+
+def _is_grand_total_label(text_lower: str) -> bool:
+    if _is_subtotal_label(text_lower):
+        return False
+    if re.search(r'\b(?:grand\s+total|total\s+amount|total\s+due|net\s+payable)\b', text_lower):
+        return True
+    return bool(re.fullmatch(r'\s*total\s*:?\s*', text_lower) or re.search(r'(?<!\w)total(?!\w)', text_lower) and 'tax' not in text_lower and 'discount' not in text_lower)
+
+
+def _looks_like_address_line(text: str) -> bool:
+    text = text.strip()
+    if not text:
+        return True
+    text_lower = text.lower()
+    if _ADDRESS_WORD_PATTERN.search(text_lower):
+        return True
+    if any(kw in text_lower for kw in ['opposite', 'near', 'tax invoice', 'phone', 'email', 'bill to', 'ship to', 'u.s.a', 'united states', 'india']):
+        return True
+    if re.match(r'^\d+[,\s]', text):
+        return True
+    if re.search(r'[\d]{4,}(?:\s*[A-Z]{2})?$', text):
+        return True
+    if re.search(r'^[A-Za-z\s]{2,}\d{4,}', text):
+        return True
+    if re.fullmatch(r'[\d,\.\s\-]+', text):
+        return True
+    return False
+
+
+def _score_vendor_candidate(text: str) -> float:
+    text = text.strip()
+    if len(text) < 3 or not any(c.isalpha() for c in text):
+        return -100.0
+    if _looks_like_address_line(text):
+        return -100.0
+    text_lower = text.lower()
+    if any(kw in text_lower for kw in ['invoice', 'tax invoice', 'receipt', 'bill to', 'ship to']):
+        return -100.0
+    score = 0.0
+    words = [w for w in re.split(r'\s+', text) if w]
+    if 2 <= len(words) <= 5:
+        score += 25.0
+    if words and all(w[0].isupper() for w in words if w and w[0].isalpha()):
+        score += 20.0
+    if any(k in text_lower for k in KEYWORDS['company']):
+        score += 30.0
+    if re.search(r'[A-Za-z]+\s+[A-Za-z]+', text):
+        score += 10.0
+    return score
+
+
+def _extract_currency_from_ocr(ocr_results: List[OCRResult]) -> str:
+    full_text = " ".join(r.text for r in ocr_results)
+    if '$' in full_text or re.search(r'\bUSD\b', full_text, re.IGNORECASE):
+        return 'USD'
+    if '₹' in full_text or re.search(r'\b(?:INR|Rs\.?)\b', full_text, re.IGNORECASE):
+        return 'INR'
+    if re.search(r'\bEUR\b|€', full_text, re.IGNORECASE):
+        return 'EUR'
+    if re.search(r'\bGBP\b|£', full_text, re.IGNORECASE):
+        return 'GBP'
+    return 'INR'
+
+
+def _reconcile_amount_fields(
+    subtotal: Optional[float],
+    grand_total: Optional[float],
+    balance_due: Optional[float],
+    tax_amount: Optional[float],
+) -> tuple:
+    """Fix common mis-assignments where subtotal is stored as grand_total."""
+    try:
+        if balance_due is not None and grand_total is not None:
+            bd = float(balance_due)
+            gt = float(grand_total)
+            if bd > gt + 0.01:
+                if subtotal is None or abs(float(subtotal) - gt) < 0.01:
+                    subtotal = gt
+                grand_total = bd
+        if grand_total is not None and subtotal is not None and tax_amount is not None:
+            gt = float(grand_total)
+            st = float(subtotal)
+            tax = float(tax_amount)
+            if gt < st and abs(st + tax - gt) > 1.0:
+                subtotal, grand_total = min(st, gt), max(st, gt)
+    except (TypeError, ValueError):
+        pass
+    return subtotal, grand_total
 
 MONTH_MAP = {
     'jan': 1, 'january': 1,
@@ -502,6 +610,8 @@ class SemanticEngine:
                         if any(term in text_lower for term in ['registration', 'reg', 'no', 'number', 'id', 'code']):
                             continue
                     if field == 'invoice_total':
+                        if _is_subtotal_label(text_lower):
+                            continue
                         if any(q in text_lower for q in ['qty', 'quantity', 'item', 'piece', 'pcs', 'count', 'weight', 'wt']):
                             continue
                         if self._is_tax_or_discount_total(text_lower):
@@ -813,6 +923,7 @@ class SemanticEngine:
                     "subtotal": subtotal,
                     "tax_amount": tax_amount,
                     "items_total": items_total,
+                    "balance_due": classified.get('balance_due', {}).get('value'),
                 }
                 for fld, var_name in [
                     ("invoice_total", "grand_total"),
@@ -871,6 +982,12 @@ class SemanticEngine:
 
         due_date = resolve_due_date(due_date, payment_terms, inv_date)
 
+        subtotal, grand_total = _reconcile_amount_fields(
+            subtotal, grand_total, balance_due, tax_amount
+        )
+
+        currency = _extract_currency_from_ocr(ocr_results)
+
         full_text = " ".join(r.text for r in ocr_results)
         payment_status, status_reason = resolve_payment_status(
             full_text=full_text,
@@ -921,6 +1038,7 @@ class SemanticEngine:
             "status_reason": status_reason,
             "items": items,
             "category": category,
+            "currency": currency,
             "confidence": confidence_dict,
             "warnings": warnings
         }
@@ -949,34 +1067,31 @@ class SemanticEngine:
         return "Retail Receipt", 0.60
 
     def _extract_vendor_name(self, ocr_results: List[OCRResult]) -> tuple:
-        # Sort top results by vertical order
         top_results = [
             r for r in ocr_results
-            if r.confidence >= 0.4 and (r.box[1] + r.box[3]) / 2.0 / self.img_h < 0.25
+            if r.confidence >= 0.4 and (r.box[1] + r.box[3]) / 2.0 / self.img_h < 0.30
         ]
         top_results.sort(key=lambda r: (r.box[1], r.box[0]))
-        
-        # Explicit label search
+
         for r in ocr_results:
             text_lower = r.text.lower()
             if any(term in text_lower for term in ["sold by", "supplier", "vendor", "merchant"]):
                 match = self._find_neighbor_value(r, ocr_results, "text")
-                if match:
+                if match and not _looks_like_address_line(match[0]):
                     return match[0], 0.95, f"Near '{r.text}' label"
-                    
-        # Exclude addresses and generic headers
-        address_kws = ["street", "road", "ave", "lane", "rd", "st", "nagar", "city", "district", "state", "floor", "building", "opposite", "near", "gstin", "ph:", "phone", "email", "tax invoice", "bill", "invoice"]
-        
+
+        best_name = None
+        best_score = -1.0
         for r in top_results:
             text = r.text.strip()
-            text_lower = text.lower()
-            if any(kw in text_lower for kw in address_kws):
-                continue
-            if not any(c.isalpha() for c in text):
-                continue
-            if len(text) >= 3:
-                return text, 0.80, "First top-region text block"
-                
+            score = _score_vendor_candidate(text)
+            if score > best_score:
+                best_score = score
+                best_name = text
+
+        if best_name and best_score > 0:
+            return best_name, 0.85, "Best-scored top-region business name"
+
         return "Unknown Merchant", 0.40, "Fallback default"
 
     def _extract_customer_info(self, ocr_results: List[OCRResult]) -> dict:
@@ -1024,6 +1139,93 @@ class SemanticEngine:
         return cust
 
     def _extract_payment_method(self, ocr_results: List[OCRResult]) -> tuple:
+        # Define header keywords for payment/bank sections
+        header_kws = ["payment information", "payment info", "payment details", "bank details", "bank info", "payment instructions", "bank transfer info", "bank credentials"]
+        # Define explicit detail keywords
+        detail_kws = [
+            "account name", "a/c name", "account number", "account no", "account no.", "a/c no", "a/c no.",
+            "bank name", "bank:", "ifsc", "iban", "swift", "routing number", "routing no", "sort code",
+            "beneficiary", "pay to:", "payment to:", "deposit to:", "transfer to:"
+        ]
+        
+        candidates = []
+        
+        # 1. Search for a payment section header
+        header_res = None
+        for r in ocr_results:
+            if r.confidence < 0.4:
+                continue
+            txt_low = r.text.lower()
+            if any(hk in txt_low for hk in header_kws) and not any(dk in txt_low for dk in ["account", "invoice", "date", "customer"]):
+                header_res = r
+                break
+                
+        if header_res:
+            hx1, hy1, hx2, hy2 = header_res.box
+            for r in ocr_results:
+                if r == header_res or r.confidence < 0.4:
+                    continue
+                rx1, ry1, rx2, ry2 = r.box
+                # If the line is vertically below the header and within 250px vertical distance
+                if ry1 > hy1 - 10 and ry1 < hy2 + 250:
+                    # Check horizontal alignment
+                    is_aligned = False
+                    if abs(rx1 - hx1) < 150:
+                        is_aligned = True
+                    elif rx1 >= hx1 - 50 and rx1 <= hx2 + 150:
+                        is_aligned = True
+                    elif min(rx2, hx2) - max(rx1, hx1) > -50:
+                        is_aligned = True
+                        
+                    if is_aligned:
+                        txt_low = r.text.lower()
+                        # Exclude unrelated terms to avoid capturing other sections or footers
+                        if not any(w in txt_low for w in ["billed to", "ship to", "invoice no", "total", "subtotal", "tax", "gstin", "description", "qty", "amount"]):
+                            if r not in candidates:
+                                candidates.append(r)
+                            
+        # 2. Add any lines that explicitly contain detail keywords
+        for r in ocr_results:
+            if r.confidence < 0.4:
+                continue
+            txt_low = r.text.lower()
+            if any(dk in txt_low for dk in detail_kws):
+                # Avoid false matches on invoice/phone numbers
+                if not any(w in txt_low for w in ["invoice no", "phone no", "serial no", "s.no"]):
+                    if r not in candidates:
+                        candidates.append(r)
+                    
+        # 3. Expand candidates: capture adjacent lines in the same block
+        if candidates:
+            min_y = min(c.box[1] for c in candidates)
+            max_y = max(c.box[3] for c in candidates)
+            avg_x1 = sum(c.box[0] for c in candidates) / len(candidates)
+            
+            additional = []
+            for r in ocr_results:
+                if r.confidence < 0.4 or r in candidates or r == header_res:
+                    continue
+                rx1, ry1, rx2, ry2 = r.box
+                if ry1 > min_y - 45 and ry2 < max_y + 45:
+                    if abs(rx1 - avg_x1) < 120:
+                        txt_low = r.text.lower()
+                        if not any(w in txt_low for w in ["billed to", "ship to", "invoice no", "total", "subtotal", "tax", "gstin", "description", "qty", "amount"]):
+                            additional.append(r)
+            for add_r in additional:
+                if add_r not in candidates:
+                    candidates.append(add_r)
+            
+        if candidates:
+            # Sort candidates by vertical position, then by horizontal position
+            sorted_candidates = sorted(candidates, key=lambda r: (r.box[1], r.box[0]))
+            payment_info_str = ", ".join(c.text.strip() for c in sorted_candidates if c.text.strip())
+            if payment_info_str:
+                # Truncate to 250 characters to fit database columns safely
+                if len(payment_info_str) > 250:
+                    payment_info_str = payment_info_str[:247] + "..."
+                return payment_info_str, 95, "Extracted payment/bank details from document"
+                
+        # 4. Fallback to keyword matching
         payment_kws = {
             "UPI": ["upi", "gpay", "phonepe", "paytm", "bhim"],
             "Card": ["card", "visa", "mastercard", "credit", "debit", "amex"],
@@ -1036,7 +1238,7 @@ class SemanticEngine:
             for method, kws in payment_kws.items():
                 if any(kw in text_lower for kw in kws):
                     return method, 90, f"Matched keyword: '{res.text}'"
-        return "Cash", 50, "Default payment method"
+        return "Cash", 50, "Default fallback"
 
     def _extract_transaction_id(self, ocr_results: List[OCRResult]) -> tuple:
         tx_patterns = [
@@ -1357,7 +1559,7 @@ class SemanticEngine:
 
         # --- Total (keyword-based) ---
         if not is_terms_sentence and any(k in text_lower for k in KEYWORDS['total']):
-            if 'subtotal' not in text_lower and 'sub total' not in text_lower:
+            if not _is_subtotal_label(text_lower):
                 if not any(q in text_lower for q in ['qty', 'quantity', 'item', 'piece', 'pcs', 'count', 'weight', 'wt']):
                     amt = self._extract_amount(text)
                     if amt:

@@ -23,6 +23,19 @@ router = APIRouter(tags=["invoices"])
 
 _pipeline_semaphore = threading.Semaphore(max(1, int(MAX_CONCURRENT_JOBS)))
 
+
+def detect_currency(raw_ocr: str = "") -> str:
+    text = raw_ocr or ""
+    if "$" in text or "USD" in text.upper():
+        return "USD"
+    if "₹" in text or "INR" in text.upper() or "Rs." in text or "Rs " in text:
+        return "INR"
+    if "€" in text or "EUR" in text.upper():
+        return "EUR"
+    if "£" in text or "GBP" in text.upper():
+        return "GBP"
+    return "INR"
+
 def process_bill_in_background(bill_id: int, permanent_file_path: str, save_filename: str, user_id: int):
     # Retrieve a new database session
     db = SessionLocal()
@@ -320,6 +333,7 @@ async def get_bills(current_user: User = Depends(get_current_user), db: Session 
             "invoiceNumber": bill.invoice_number,
             "confidence": int(bill.confidence_score * 100),
             "rawOCR": bill.raw_ocr,
+            "currency": detect_currency(bill.raw_ocr or ""),
             "thumbnail": "📄"
         })
     return formatted
@@ -357,6 +371,7 @@ async def get_bill_detail(bill_id: int, current_user: User = Depends(get_current
         "confidence": int(bill.confidence_score * 100),
         "imageUrl": bill.image_url,
         "rawOCR": bill.raw_ocr or "No raw OCR text available.",
+        "currency": detect_currency(bill.raw_ocr or ""),
         "metadata": {
             "uploadDate": bill.created_at.strftime("%B %d, %Y"),
             "processingTime": "1.8 seconds",
