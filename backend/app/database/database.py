@@ -13,6 +13,7 @@ from app.core.config import (
     DB_POOL_SIZE,
     DB_MAX_OVERFLOW,
     DB_POOL_RECYCLE_SECONDS,
+    DB_SSL_DISABLED,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,12 +39,17 @@ def ensure_database_exists():
 # NOTE: ensure_database_exists() should be called at app startup, not import time,
 # to avoid side effects and to support multi-worker deployments.
 
+connect_args = {}
+if DB_SSL_DISABLED:
+    connect_args["ssl_disabled"] = True
+
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
     pool_size=max(1, int(DB_POOL_SIZE)),
     max_overflow=max(0, int(DB_MAX_OVERFLOW)),
     pool_recycle=max(0, int(DB_POOL_RECYCLE_SECONDS)),
+    connect_args=connect_args,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

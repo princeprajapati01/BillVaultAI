@@ -57,6 +57,7 @@ class CandidateEngine:
         page_hint: Optional[str] = None,
         keyword: Optional[str] = None,
         enable_correction: bool = True,
+    ) -> None:
         corr = None
         if enable_correction and raw_value is not None:
             corr = self.corrector.correct(field_name, raw_value)

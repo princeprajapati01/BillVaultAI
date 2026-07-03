@@ -31,6 +31,8 @@ MAX_CONCURRENT_JOBS = int(os.getenv("MAX_CONCURRENT_JOBS", "3"))
 DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "5"))
 DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "10"))
 DB_POOL_RECYCLE_SECONDS = int(os.getenv("DB_POOL_RECYCLE_SECONDS", "1800"))
+DB_SSL_DISABLED = os.getenv("DB_SSL_DISABLED", "true" if DB_HOST.lower() in ("localhost", "127.0.0.1") else "false").strip().lower() in {"1", "true", "yes", "y", "on"}
+
 
 # Upload Directory
 # Using absolute path relative to the root backend directory to keep consistency

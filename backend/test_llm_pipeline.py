@@ -186,9 +186,46 @@ def test_pipeline_fallback_no_key(MockOCREngine, MockYOLODetector):
             
     print("[PASS] test_pipeline_fallback_no_key")
 
+def test_llm_sanitization_and_fallbacks():
+    llm_output_junk = {
+        "document_type": "cash bill receipt", 
+        "vendor_name": "N/A", 
+        "vendor_address": "none", 
+        "vendor_gstin": "07AAAAA1111A1Z1", 
+        "vendor_email": "Not Available", 
+        "invoice_number": "inv-o0100", 
+        "invoice_date": "16 June 2025", 
+        "subtotal": "$1,200.50", 
+        "grand_total": "₹ 1,200.50", 
+        "items": [
+            {
+                "description": "Item 1",
+                "quantity": "2.0",
+                "unit_price": "600.25",
+                "total_amount": None 
+            }
+        ]
+    }
+    raw_ocr = "TAX INVOICE receipt cashier store"
+    mapped = map_llm_json_to_schema(llm_output_junk, raw_ocr)
+    
+    assert mapped["document_type"] == "receipt"
+    assert mapped["vendor"]["vendor_name"]["value"] is None
+    assert mapped["vendor"]["vendor_address"]["value"] is None
+    assert mapped["vendor"]["vendor_email"]["value"] is None
+    assert mapped["vendor"]["vendor_gstin"]["value"] == "07AAAAA1111A1Z1"
+    assert mapped["invoice_details"]["invoice_number"]["value"] == "inv-00100"
+    assert mapped["invoice_details"]["invoice_date"]["value"] == "16/06/2025"
+    assert mapped["amounts"]["subtotal"]["value"] == 1200.50
+    assert mapped["amounts"]["grand_total"]["value"] == 1200.50
+    assert mapped["items"][0]["total_amount"] == 1200.50
+    
+    print("[PASS] test_llm_sanitization_and_fallbacks")
+
 if __name__ == "__main__":
     test_clean_and_parse_json()
     test_map_llm_json_to_schema()
+    test_llm_sanitization_and_fallbacks()
     test_extract_with_huggingface_multimodal()
     test_extract_with_huggingface_text_only()
     test_pipeline_fallback_no_key()
