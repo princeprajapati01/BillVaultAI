@@ -42,6 +42,7 @@ def ensure_database_exists():
 connect_args = {}
 if DB_SSL_DISABLED:
     connect_args["ssl_disabled"] = True
+connect_args["connect_timeout"] = 20
 
 engine = create_engine(
     DATABASE_URL,
