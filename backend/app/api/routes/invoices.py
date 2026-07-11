@@ -25,6 +25,14 @@ _pipeline_semaphore = threading.Semaphore(max(1, int(MAX_CONCURRENT_JOBS)))
 
 
 def detect_currency(raw_ocr: str = "") -> str:
+    """
+    Best-effort currency detection from raw OCR text for display purposes.
+    Returns "INR" only when there's no other signal, since the Bill model
+    does not persist a currency column separately — this stays a display
+    heuristic, not an authoritative extracted field (see llm_engine.py's
+    `currency` field, which is now allowed to be None rather than forced
+    to a default, for the actually-extracted value).
+    """
     text = raw_ocr or ""
     if "$" in text or "USD" in text.upper():
         return "USD"
@@ -36,14 +44,13 @@ def detect_currency(raw_ocr: str = "") -> str:
         return "GBP"
     return "INR"
 
+
 def process_bill_in_background(bill_id: int, permanent_file_path: str, save_filename: str, user_id: int):
-    # Retrieve a new database session
     db = SessionLocal()
     try:
         if pipeline_state.pipeline is None:
             raise Exception("IDP Pipeline is not loaded. Please check model path configuration.")
 
-        # Run AI Pipeline with thread semaphore
         with _pipeline_semaphore:
             result = pipeline_state.pipeline.process(permanent_file_path)
 
@@ -52,15 +59,14 @@ def process_bill_in_background(bill_id: int, permanent_file_path: str, save_file
             logger.error(f"Bill ID {bill_id} not found in database for background processing.")
             return
 
-        # Extract classification fields from nested structure
         fields = result.get("fields", {})
         vendor = fields.get("vendor", {}).get("vendor_name", {}).get("value") or "Unknown Merchant"
-        
+
         try:
             total_val = float(fields.get("amounts", {}).get("grand_total", {}).get("value") or 0.0)
         except Exception:
             total_val = 0.0
-            
+
         try:
             cgst = float(fields.get("taxes", {}).get("cgst_amount", {}).get("value") or 0.0)
             sgst = float(fields.get("taxes", {}).get("sgst_amount", {}).get("value") or 0.0)
@@ -75,7 +81,7 @@ def process_bill_in_background(bill_id: int, permanent_file_path: str, save_file
         inv_no = fields.get("invoice_details", {}).get("invoice_number", {}).get("value") or "Not detected"
         inv_date = fields.get("invoice_details", {}).get("invoice_date", {}).get("value") or "Not detected"
         gst_no = fields.get("vendor", {}).get("vendor_gstin", {}).get("value") or None
-        
+
         try:
             sub_total = fields.get("amounts", {}).get("subtotal", {}).get("value")
             if sub_total is not None:
@@ -89,14 +95,20 @@ def process_bill_in_background(bill_id: int, permanent_file_path: str, save_file
         tx_id = fields.get("payment", {}).get("transaction_id", {}).get("value") or None
         cat_val = fields.get("category") or "Office"
 
-        # Calculate average confidence from the engine's confidence dictionary
+        # FIXED (audit Bug #9): "notes" was never populated by extraction —
+        # it's now part of the LLM/SemanticEngine output schema, so wire it
+        # through here. Falls back to None (not an empty string) so the
+        # frontend can distinguish "nothing extracted" from "extracted, but
+        # blank" if that distinction ever matters.
+        notes_val = fields.get("notes") or None
+
         conf_dict = fields.get("confidence", {})
         conf_values = [v for v in conf_dict.values() if v is not None]
         avg_conf = (sum(conf_values) / len(conf_values) / 100.0) if conf_values else 1.0
 
         due_date_val = fields.get("invoice_details", {}).get("due_date", {}).get("value") or None
         payment_terms_val = fields.get("payment", {}).get("payment_terms", {}).get("value") or None
-        
+
         try:
             balance_due_val = fields.get("payment", {}).get("balance_due", {}).get("value")
             balance_due_val = float(balance_due_val) if balance_due_val is not None else None
@@ -118,7 +130,6 @@ def process_bill_in_background(bill_id: int, permanent_file_path: str, save_file
         payment_status_val = fields.get("payment_status") or "UNKNOWN"
         status_reason_val = fields.get("status_reason") or "No payment information was found."
 
-        # Update db_bill fields
         bill.merchant_name = vendor
         bill.invoice_total = total_val
         bill.tax_amount = tax
@@ -131,6 +142,7 @@ def process_bill_in_background(bill_id: int, permanent_file_path: str, save_file
         bill.subtotal = sub_total
         bill.payment_method = pay_method
         bill.transaction_id = tx_id
+        bill.notes = notes_val
         bill.confidence_score = avg_conf
         bill.raw_ocr = result.get("raw_ocr", "")
         bill.category = cat_val
@@ -144,7 +156,9 @@ def process_bill_in_background(bill_id: int, permanent_file_path: str, save_file
 
         db.commit()
 
-        # Log system activity
+        engine_used = result.get("engine_used", "unknown")
+        logger.info(f"Bill {bill_id} processed using engine='{engine_used}'.")
+
         user = db.query(User).filter(User.id == user_id).first()
         user_name = user.name if user else f"User {user_id}"
         activity = SystemActivity(
@@ -158,7 +172,6 @@ def process_bill_in_background(bill_id: int, permanent_file_path: str, save_file
 
     except Exception as e:
         logger.error(f"Error processing document in background: {str(e)}", exc_info=True)
-        # Update bill status to failed
         try:
             bill = db.query(Bill).filter(Bill.id == bill_id).first()
             if bill:
@@ -166,8 +179,7 @@ def process_bill_in_background(bill_id: int, permanent_file_path: str, save_file
                 db.commit()
         except Exception as db_err:
             logger.error(f"Failed to update bill status to failed: {str(db_err)}")
-        
-        # Cleanup file if processing failed
+
         if os.path.exists(permanent_file_path):
             try:
                 os.remove(permanent_file_path)
@@ -191,10 +203,10 @@ async def process_document(
         )
 
     # 1. Validate file type
-    if not file.filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff')):
+    if not file.filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp', '.pdf')):
         raise HTTPException(
             status_code=400,
-            detail="Unsupported file type. Please upload a valid image (PNG, JPG, JPEG, BMP, TIFF)."
+            detail="Unsupported file type. Please upload a valid document/image (PNG, JPG, JPEG, BMP, TIFF, WEBP, PDF)."
         )
 
     # 2. Check upload limits for free users
@@ -216,19 +228,33 @@ async def process_document(
 
     # 3. Generate secure local file path
     job_id = str(uuid.uuid4())
-    file_ext = os.path.splitext(file.filename)[1] or ".png"
+    file_ext = os.path.splitext(file.filename)[1].lower() or ".png"
     save_filename = f"{job_id}{file_ext}"
     permanent_file_path = os.path.join(UPLOADS_DIR, save_filename)
 
     try:
-        # Save file permanently on disk
         with open(permanent_file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        # Construct public URL
-        image_web_url = f"http://localhost:8000/uploads/{save_filename}"
+        if file_ext == '.pdf':
+            try:
+                import fitz
+                doc = fitz.open(permanent_file_path)
+                if len(doc) > 0:
+                    page = doc.load_page(0)
+                    pix = page.get_pixmap(dpi=150)
+                    preview_filename = f"{job_id}.png"
+                    preview_path = os.path.join(UPLOADS_DIR, preview_filename)
+                    pix.save(preview_path)
+                    image_web_url = f"http://localhost:8000/uploads/{preview_filename}"
+                else:
+                    image_web_url = f"http://localhost:8000/uploads/{save_filename}"
+            except Exception as e:
+                logger.error(f"Failed to generate PDF preview: {e}")
+                image_web_url = f"http://localhost:8000/uploads/{save_filename}"
+        else:
+            image_web_url = f"http://localhost:8000/uploads/{save_filename}"
 
-        # Create placeholder Bill record in database
         db_bill = Bill(
             user_id=current_user.id,
             merchant_name="Processing...",
@@ -254,7 +280,6 @@ async def process_document(
         db.commit()
         db.refresh(db_bill)
 
-        # Queue the background task
         background_tasks.add_task(
             process_bill_in_background,
             db_bill.id,
@@ -263,7 +288,6 @@ async def process_document(
             current_user.id
         )
 
-        # Format and return standard JSON response immediately
         return {
             "id": db_bill.id,
             "merchant": db_bill.merchant_name,
@@ -293,7 +317,6 @@ async def process_document(
 
     except Exception as e:
         logger.error(f"Error processing document: {str(e)}", exc_info=True)
-        # Cleanup file if processing failed
         if os.path.exists(permanent_file_path):
             try:
                 os.remove(permanent_file_path)
@@ -344,7 +367,7 @@ async def get_bill_detail(bill_id: int, current_user: User = Depends(get_current
     bill = db.query(Bill).filter(Bill.id == bill_id, Bill.user_id == current_user.id).first()
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
-        
+
     return {
         "id": bill.id,
         "merchant": bill.merchant_name or "Unknown Merchant",
@@ -382,9 +405,9 @@ async def get_bill_detail(bill_id: int, current_user: User = Depends(get_current
 
 @router.put("/api/bills/{bill_id}")
 async def update_bill(
-    bill_id: int, 
-    bill_data: BillUpdate, 
-    current_user: User = Depends(get_current_user), 
+    bill_id: int,
+    bill_data: BillUpdate,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     bill = db.query(Bill).filter(Bill.id == bill_id, Bill.user_id == current_user.id).first()
@@ -427,7 +450,6 @@ async def update_bill(
         if bill_data.status_reason is not None:
             bill.status_reason = bill_data.status_reason
 
-        # Recalculate due date if not explicitly set
         if bill_data.due_date is None:
             from app.pipeline.semantic_engine import resolve_due_date
             bill.due_date = resolve_due_date(
@@ -436,7 +458,6 @@ async def update_bill(
                 invoice_date_str=bill.invoice_date
             )
 
-        # Recalculate payment status and reason if not explicitly set
         if bill_data.payment_status is None:
             from app.pipeline.semantic_engine import resolve_payment_status
             status, reason = resolve_payment_status(
@@ -452,7 +473,6 @@ async def update_bill(
         db.commit()
         db.refresh(bill)
 
-        # Log activity
         activity = SystemActivity(
             user_id=current_user.id,
             user_name=current_user.name,
@@ -475,7 +495,6 @@ async def delete_bill(bill_id: int, current_user: User = Depends(get_current_use
         raise HTTPException(status_code=404, detail="Bill not found")
 
     try:
-        # Delete image from disk if possible
         if bill.image_url:
             filename = bill.image_url.split("/")[-1]
             filepath = os.path.join(UPLOADS_DIR, filename)
@@ -488,7 +507,6 @@ async def delete_bill(bill_id: int, current_user: User = Depends(get_current_use
         inv_num = bill.invoice_number
         db.delete(bill)
 
-        # Log activity
         activity = SystemActivity(
             user_id=current_user.id,
             user_name=current_user.name,
@@ -503,13 +521,15 @@ async def delete_bill(bill_id: int, current_user: User = Depends(get_current_use
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
+
 from app.database.models.feedback import Feedback
+
 
 @router.post("/api/feedback")
 async def create_feedback(data: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     rating = data.get("rating")
     comment = data.get("comment")
-    
+
     if rating is None:
         raise HTTPException(status_code=400, detail="Rating is required")
     try:
@@ -518,7 +538,7 @@ async def create_feedback(data: dict, current_user: User = Depends(get_current_u
             raise ValueError()
     except ValueError:
         raise HTTPException(status_code=400, detail="Rating must be an integer between 1 and 5")
-        
+
     feedback = Feedback(
         user_id=current_user.id,
         user_name=current_user.name,
@@ -527,8 +547,7 @@ async def create_feedback(data: dict, current_user: User = Depends(get_current_u
         comment=comment
     )
     db.add(feedback)
-    
-    # Log activity
+
     activity = SystemActivity(
         user_id=current_user.id,
         user_name=current_user.name,
@@ -536,7 +555,7 @@ async def create_feedback(data: dict, current_user: User = Depends(get_current_u
         message=f"User {current_user.name} submitted a {rating_int}-star rating feedback."
     )
     db.add(activity)
-    
+
     db.commit()
     db.refresh(feedback)
     return {"message": "Feedback submitted successfully", "id": feedback.id}

@@ -11,7 +11,8 @@ import {
   Scan,
   CheckCircle2,
   ArrowLeft,
-  Sparkles
+  Sparkles,
+  FileText
 } from 'lucide-react'
 
 // Convert dataURL to Blob
@@ -75,19 +76,18 @@ export default function UploadScreen() {
   }
 
   const handleUpload = async () => {
-    if (!selectedFile || !preview) return
+    if (!selectedFile) return
     setIsUploading(true)
     setUploadError(null)
 
     try {
-      const blob = dataURLtoBlob(preview)
       const token = localStorage.getItem('auth_token')
       if (!token) {
         throw new Error('You must be logged in to process bills. Please sign in.')
       }
 
       const formData = new FormData()
-      formData.append('file', blob, selectedFile.name)
+      formData.append('file', selectedFile, selectedFile.name)
 
       // Call backend API with token auth
       const response = await fetch('http://localhost:8000/process/document', {
@@ -106,7 +106,7 @@ export default function UploadScreen() {
       const data = await response.json()
       
       // Save info in local storage so that /processing page can use it
-      localStorage.setItem('temp_bill_file', preview)
+      localStorage.setItem('temp_bill_file', preview || '')
       localStorage.setItem('temp_bill_name', selectedFile.name)
       localStorage.setItem('temp_bill_size', selectedFile.size.toString())
       localStorage.setItem('processed_bill_data', JSON.stringify(data))
@@ -227,7 +227,7 @@ export default function UploadScreen() {
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept="image/*"
+                    accept="image/*,application/pdf"
                     onChange={handleFileInput}
                     className="hidden"
                   />
@@ -319,12 +319,28 @@ export default function UploadScreen() {
               {/* Preview Card */}
               <div className="bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-200">
                 <div className="relative">
-                  {/* Image Preview */}
-                  <img
-                    src={preview}
-                    alt="Bill preview"
-                    className="w-full h-96 object-contain bg-gray-50"
-                  />
+                  {/* Document/Image Preview */}
+                  {selectedFile?.type === 'application/pdf' || selectedFile?.name.toLowerCase().endsWith('.pdf') ? (
+                    <div className="w-full h-96 bg-slate-900 flex flex-col items-center justify-center p-6 text-center">
+                      <div className="w-20 h-20 bg-red-500/10 text-red-500 rounded-2xl flex items-center justify-center mb-4 border border-red-500/20 shadow-glow animate-pulse">
+                        <FileText className="w-10 h-10" />
+                      </div>
+                      <h4 className="text-lg font-bold text-white mb-1">PDF Document</h4>
+                      <p className="text-sm text-slate-400 max-w-xs truncate">{selectedFile?.name}</p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {selectedFile && (selectedFile.size / (1024 * 1024)).toFixed(2)} MB
+                      </p>
+                      <div className="mt-4 px-3 py-1 bg-red-500/20 text-red-300 rounded-full text-xs font-semibold uppercase tracking-wider">
+                        PDF Format Ready
+                      </div>
+                    </div>
+                  ) : (
+                    <img
+                      src={preview || ''}
+                      alt="Bill preview"
+                      className="w-full h-96 object-contain bg-gray-50"
+                    />
+                  )}
 
                   {/* Scanning Overlay */}
                   <motion.div

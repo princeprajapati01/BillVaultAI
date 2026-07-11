@@ -49,3 +49,11 @@ SMTP_FROM = os.getenv("SMTP_FROM", "")
 # Hugging Face Configurations
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY", "").strip()
 HUGGINGFACE_MODEL = os.getenv("HUGGINGFACE_MODEL", "Qwen/Qwen2.5-VL-72B-Instruct").strip()
+
+# Local Ollama Configurations (used by app.pipeline.llm_engine as the
+# primary extraction path when a local vision-language model is preferred
+# over the Hugging Face-hosted API).
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip().rstrip("/")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5vl:3b").strip()
+OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "120"))
+OLLAMA_HEALTHCHECK_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_HEALTHCHECK_TIMEOUT_SECONDS", "3"))

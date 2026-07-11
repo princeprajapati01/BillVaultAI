@@ -35,7 +35,7 @@ class CategoryNLPClassifier:
             "Entertainment": ["entertainment", "movie", "ticket", "event", "show", "cinema", "theatre", "amusement"],
             "Office Supplies": ["stationery", "paper", "pen", "office", "supplies", "printing", "stapler", "envelope", "notebook", "shoes", "shoe", "apparel", "wear", "shirt", "clothing"]
         }
-        
+
         # Build vocabulary
         vocab_set = set()
         for kws in self.categories.values():
@@ -43,12 +43,12 @@ class CategoryNLPClassifier:
                 vocab_set.add(kw)
         self.vocab = sorted(list(vocab_set))
         self.vocab_idx = {word: idx for idx, word in enumerate(self.vocab)}
-        
+
         # Represent each category as a normalized unit vector tensor in PyTorch
         num_vocab = len(self.vocab)
         num_categories = len(self.categories)
         self.cat_matrix = torch.zeros((num_categories, num_vocab), dtype=torch.float32)
-        
+
         self.cat_list = list(self.categories.keys())
         for cat_idx, cat_name in enumerate(self.cat_list):
             for kw in self.categories[cat_name]:
@@ -62,30 +62,30 @@ class CategoryNLPClassifier:
     def classify(self, text: str) -> str:
         # Tokenize text
         words = re.findall(r'\b[a-z]{3,}\b', text.lower())
-        
+
         # Build input vector
         input_vector = torch.zeros((len(self.vocab),), dtype=torch.float32)
         for w in words:
             if w in self.vocab_idx:
                 input_vector[self.vocab_idx[w]] += 1.0
-                
+
         # Normalize input vector
         input_norm = torch.norm(input_vector)
         if input_norm == 0:
             return "Office Supplies" # Default category
-            
+
         input_vector /= input_norm
-        
+
         # Compute Cosine Similarity using PyTorch matrix multiplication
         similarities = torch.matmul(self.cat_matrix, input_vector)
-        
+
         # Find index of maximum similarity
         max_idx = torch.argmax(similarities).item()
-        
+
         # If the highest similarity is 0, fallback
         if similarities[max_idx].item() == 0:
             return "Office Supplies"
-            
+
         return self.cat_list[max_idx]
 
 
@@ -110,7 +110,7 @@ class FieldNLPClassifier:
             "tax_amount": ["tax", "gst", "vat", "cess"],
             "invoice_total": ["grand", "total", "payable", "gross", "grand total", "total due", "net"]
         }
-        
+
         # Build vocabulary
         vocab_set = set()
         for kws in self.fields.values():
@@ -118,12 +118,12 @@ class FieldNLPClassifier:
                 vocab_set.add(kw)
         self.vocab = sorted(list(vocab_set))
         self.vocab_idx = {word: idx for idx, word in enumerate(self.vocab)}
-        
+
         # Represent each field as a normalized unit vector tensor in PyTorch
         num_vocab = len(self.vocab)
         num_fields = len(self.fields)
         self.field_matrix = torch.zeros((num_fields, num_vocab), dtype=torch.float32)
-        
+
         self.field_list = list(self.fields.keys())
         for f_idx, f_name in enumerate(self.field_list):
             for kw in self.fields[f_name]:
@@ -137,27 +137,27 @@ class FieldNLPClassifier:
     def classify_label(self, text: str, threshold: float = 0.3) -> Optional[str]:
         # Tokenize text (letters only, min length 2)
         words = re.findall(r'\b[a-z]{2,}\b', text.lower())
-        
+
         # Build input vector
         input_vector = torch.zeros((len(self.vocab),), dtype=torch.float32)
         for w in words:
             if w in self.vocab_idx:
                 input_vector[self.vocab_idx[w]] += 1.0
-                
+
         # Normalize input vector
         input_norm = torch.norm(input_vector)
         if input_norm == 0:
             return None
-            
+
         input_vector /= input_norm
-        
+
         # Compute Cosine Similarity
         similarities = torch.matmul(self.field_matrix, input_vector)
-        
+
         # Find index of maximum similarity
         max_idx = torch.argmax(similarities).item()
         max_score = similarities[max_idx].item()
-        
+
         if max_score >= threshold:
             return self.field_list[max_idx]
         return None
@@ -333,13 +333,13 @@ MONTH_MAP = {
 def normalize_date(date_str: str) -> str:
     if not date_str:
         return date_str
-    
+
     # Clean the string
     s = date_str.strip()
-    
+
     # Remove common suffixes like st, nd, rd, th from days (e.g. 24th -> 24)
     s = re.sub(r'(\d+)(?:st|nd|rd|th)\b', r'\1', s, flags=re.IGNORECASE)
-    
+
     # Try Month DD, YYYY (e.g. "April 8, 2015" or "October 2, 2083")
     m1 = re.search(r'([A-Za-z]+)\s+(\d{1,2})\s*,?\s*(\d{4})', s)
     if m1:
@@ -349,7 +349,7 @@ def normalize_date(date_str: str) -> str:
         month = MONTH_MAP.get(month_name)
         if month and 1 <= day <= 31:
             return f"{day:02d}/{month:02d}/{year:04d}"
-            
+
     # Try DD Month YYYY (e.g. "8 April 2015" or "24 May 2026")
     m2 = re.search(r'(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})', s)
     if m2:
@@ -359,7 +359,7 @@ def normalize_date(date_str: str) -> str:
         month = MONTH_MAP.get(month_name)
         if month and 1 <= day <= 31:
             return f"{day:02d}/{month:02d}/{year:04d}"
-            
+
     # Try YYYY/MM/DD or YYYY-MM-DD
     m3 = re.search(r'(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})', s)
     if m3:
@@ -368,20 +368,20 @@ def normalize_date(date_str: str) -> str:
         day = int(m3.group(3))
         if 1 <= month <= 12 and 1 <= day <= 31:
             return f"{day:02d}/{month:02d}/{year:04d}"
-            
+
     # Try DD/MM/YYYY or D/M/YYYY or MM/DD/YYYY
     m4 = re.search(r'(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})', s)
     if m4:
         part1 = int(m4.group(1))
         part2 = int(m4.group(2))
         year_part = int(m4.group(3))
-        
+
         # Handle 2-digit year
         if year_part < 100:
             year = 2000 + year_part
         else:
             year = year_part
-            
+
         # Resolve day/month ambiguity:
         # Default to DD/MM/YYYY unless part1 > 12 (then it must be MM/DD/YYYY)
         # If part2 > 12 (then it must be DD/MM/YYYY)
@@ -394,10 +394,10 @@ def normalize_date(date_str: str) -> str:
         else:
             day = part1
             month = part2
-            
+
         if 1 <= month <= 12 and 1 <= day <= 31:
             return f"{day:02d}/{month:02d}/{year:04d}"
-            
+
     return date_str
 
 
@@ -411,6 +411,20 @@ def parse_payment_terms_days(terms_str: Optional[str]) -> Optional[int]:
     return None
 
 
+def _parse_known_date_formats(date_str: Optional[str]) -> Optional[datetime.date]:
+    """Shared date-parsing helper. Previously this same strptime-loop was
+    duplicated in resolve_due_date and resolve_payment_status; centralized
+    here so a fix to date-format handling only needs to happen in one place."""
+    if not date_str or date_str == "Not detected":
+        return None
+    for fmt in ['%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%Y/%m/%d']:
+        try:
+            return datetime.datetime.strptime(date_str, fmt).date()
+        except Exception:
+            continue
+    return None
+
+
 def resolve_due_date(due_date_str: Optional[str], payment_terms_str: Optional[str], invoice_date_str: Optional[str]) -> Optional[str]:
     # If due_date exists, use it.
     if due_date_str and due_date_str != "Not detected":
@@ -420,13 +434,7 @@ def resolve_due_date(due_date_str: Optional[str], payment_terms_str: Optional[st
         return None
 
     # Parse invoice date
-    parsed_invoice_date = None
-    for fmt in ['%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%Y/%m/%d']:
-        try:
-            parsed_invoice_date = datetime.datetime.strptime(invoice_date_str, fmt).date()
-            break
-        except Exception:
-            continue
+    parsed_invoice_date = _parse_known_date_formats(invoice_date_str)
 
     if not parsed_invoice_date:
         return None
@@ -435,7 +443,7 @@ def resolve_due_date(due_date_str: Optional[str], payment_terms_str: Optional[st
         terms_lower = payment_terms_str.lower()
         if "due on receipt" in terms_lower:
             return parsed_invoice_date.strftime('%d/%m/%Y')
-        
+
         days = parse_payment_terms_days(payment_terms_str)
         if days is not None:
             calculated_date = parsed_invoice_date + datetime.timedelta(days=days)
@@ -451,54 +459,66 @@ def resolve_payment_status(
     total_amount: Optional[float],
     due_date_str: Optional[str]
 ) -> tuple[str, str]:
+    """Determine payment status.
+
+    IMPORTANT: numeric evidence (balance_due, amount_paid vs total_amount) is
+    checked BEFORE any keyword text scanning. A previous version of this
+    function did `"paid" in text` / `"unpaid" in text` as substring checks
+    over the ENTIRE OCR text, which meant boilerplate prose like "please
+    ensure this invoice is paid within 30 days" or "payment terms: to be
+    paid on receipt" would force a status of PAID even when nothing had
+    actually been paid. Loose keyword matching is now only used as a last
+    resort, and only against explicit status stamps/labels rather than
+    free-form sentences.
+    """
     text = full_text.lower()
 
-    # Keep Cancelled check for system integrity
+    # Cancellation is a strong, low-ambiguity signal — keep checking first.
     if any(kw in text for kw in ["cancelled", "void", "voided"]):
         return "CANCELLED", "Invoice contains cancellation or void status keywords."
 
-    if "unpaid" in text:
-        return "UNPAID", "Text contains 'unpaid' keyword."
+    # --- 1. Numeric evidence first: most reliable indicator ---
+    if balance_due is not None:
+        try:
+            bd = float(balance_due)
+        except (TypeError, ValueError):
+            bd = None
+        if bd is not None:
+            if bd <= 0.01:
+                return "PAID", "Balance due is 0."
+            elif bd > 0:
+                due_date = _parse_known_date_formats(due_date_str)
+                if due_date and due_date < datetime.date.today():
+                    return "OVERDUE", f"Overdue: balance due ({bd}) > 0 and due date ({due_date_str}) passed."
+                return "UNPAID", "Balance due > 0."
 
-    elif "paid" in text:
-        return "PAID", "Text contains 'paid' keyword."
+    if amount_paid is not None and total_amount is not None:
+        try:
+            paid = float(amount_paid)
+            total = float(total_amount)
+        except (TypeError, ValueError):
+            paid = total = None
+        if paid is not None and total is not None:
+            if paid >= total - 0.01:
+                return "PAID", "Amount paid >= total amount."
+            elif paid > 0:
+                return "PARTIALLY_PAID", "Amount paid is less than total amount."
 
-    elif balance_due is not None:
-        if balance_due == 0:
-            return "PAID", "Balance due is 0."
-        elif balance_due > 0:
-            # Overdue check (refinement of unpaid logic based on current date)
-            due_date = None
-            if due_date_str and due_date_str != "Not detected":
-                for fmt in ['%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%Y/%m/%d']:
-                    try:
-                        due_date = datetime.datetime.strptime(due_date_str, fmt).date()
-                        break
-                    except Exception:
-                        continue
-            if due_date and due_date < datetime.date.today():
-                return "OVERDUE", f"Overdue: balance due ({balance_due}) > 0 and due date ({due_date_str}) passed."
-            return "UNPAID", "Balance due > 0."
+    # --- 2. Explicit status stamps/labels only — NOT loose substring search
+    #        over the full document text, which would catch ordinary prose. ---
+    if re.search(r'\b(?:payment\s+status)\s*:?\s*cancelled\b', text):
+        return "CANCELLED", "Explicit status stamp: cancelled."
+    if re.search(r'\b(?:paid\s+in\s+full|payment\s+received\s+in\s+full|status\s*:\s*paid)\b', text):
+        return "PAID", "Explicit 'paid' stamp found on document."
+    if re.search(r'\b(?:status\s*:\s*unpaid|payment\s+status\s*:\s*unpaid)\b', text):
+        return "UNPAID", "Explicit 'unpaid' stamp found on document."
 
-    elif amount_paid is not None and total_amount is not None:
-        if amount_paid >= total_amount:
-            return "PAID", "Amount paid >= total amount."
-        elif 0 < amount_paid < total_amount:
-            return "PARTIALLY_PAID", "Amount paid is less than total amount."
-
-    # If a due date is present and valid, determine status based on whether it is in the future or past
-    if due_date_str and due_date_str != "Not detected":
-        due_date = None
-        for fmt in ['%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%Y/%m/%d']:
-            try:
-                due_date = datetime.datetime.strptime(due_date_str, fmt).date()
-                break
-            except Exception:
-                continue
-        if due_date:
-            if due_date < datetime.date.today():
-                return "OVERDUE", f"Overdue: due date ({due_date_str}) passed."
-            return "UNPAID", f"Unpaid: due date ({due_date_str}) is in the future."
+    # --- 3. Due-date-only inference as last resort ---
+    due_date = _parse_known_date_formats(due_date_str)
+    if due_date:
+        if due_date < datetime.date.today():
+            return "OVERDUE", f"Overdue: due date ({due_date_str}) passed."
+        return "UNPAID", f"Unpaid: due date ({due_date_str}) is in the future."
 
     return "UNKNOWN", "Payment status cannot be determined."
 
@@ -588,7 +608,16 @@ class SemanticEngine:
             # Collect amounts
             amt = self._extract_amount(text)
             if amt and not 'gstin' in text.lower():
-                if not any(q in text.lower() for q in ['qty', 'quantity', 'item', 'piece', 'pcs', 'count', 'weight', 'wt']):
+                is_quantity_row = False
+                for row in grouped_rows:
+                    if result in row:
+                        row_text_lower = " ".join(r.text.lower() for r in row)
+                        has_qty = any(q in row_text_lower for q in ['qty', 'quantity', 'item', 'piece', 'pcs', 'count', 'weight', 'wt'])
+                        has_total = any(t in row_text_lower for t in ['total', 'payable', 'net amount', 'gross amount', 'amt.total'])
+                        if has_qty and not has_total:
+                            is_quantity_row = True
+                        break
+                if not is_quantity_row and not any(q in text.lower() for q in ['qty', 'quantity', 'item', 'piece', 'pcs', 'count', 'weight', 'wt']):
                     amounts.append((amt, result.box, result.confidence))
 
         # Spatial Proximity Pairing
@@ -597,10 +626,10 @@ class SemanticEngine:
                 continue
             text_lower = result.text.lower()
             text = result.text.strip()
-            
+
             matched_field = None
             expected_type = None
-            
+
             for field, pat, exp_type in self.KEYS_CONFIG:
                 if pat.search(text_lower):
                     if field == 'invoice_date' and any(k in text_lower for k in ['due', 'expiry', 'pay by', 'ship', 'delivery']):
@@ -627,7 +656,7 @@ class SemanticEngine:
                     matched_field = field
                     expected_type = exp_type
                     break
-            
+
             # Fallback to NLP classification if the label consists of a few words
             if not matched_field:
                 if len(result.text.split()) <= 4:
@@ -644,7 +673,7 @@ class SemanticEngine:
                             pass
                         else:
                             matched_field = nlp_field
-                            
+
                         if matched_field:
                             field_types = {
                                 'invoice_number': 'invoice_number',
@@ -713,7 +742,7 @@ class SemanticEngine:
                             page_hint=getattr(neighbor_result, "yolo_hint", None),
                             enable_correction=True,
                         )
-                    
+
                     is_better = False
                     if matched_field not in classified:
                         is_better = True
@@ -878,14 +907,7 @@ class SemanticEngine:
         # Date validation check
         if inv_date:
             try:
-                # Basic parsing check
-                parsed_d = None
-                for fmt in ['%Y-%m-%d', '%d-%m-%Y', '%d/%m/%Y', '%Y/%m/%d']:
-                    try:
-                        parsed_d = datetime.datetime.strptime(inv_date, fmt).date()
-                        break
-                    except:
-                        continue
+                parsed_d = _parse_known_date_formats(inv_date)
                 if parsed_d and parsed_d > datetime.date.today():
                     warnings.append(f"Invoice Date ({inv_date}) is in the future")
             except Exception:
@@ -1045,7 +1067,7 @@ class SemanticEngine:
 
     def _detect_document_type(self, ocr_results: List[OCRResult]) -> tuple:
         text_full = " ".join(r.text for r in ocr_results).lower()
-        
+
         # Categorized keywords
         kw_map = {
             "GST Invoice": ["gstin", "gst invoice", "gst no", "gst number"],
@@ -1059,11 +1081,11 @@ class SemanticEngine:
             "Purchase Bill": ["purchase bill", "purchase order"],
             "Service Invoice": ["service invoice", "consulting", "hourly rate"]
         }
-        
+
         for doc_type, kws in kw_map.items():
             if any(kw in text_full for kw in kws):
                 return doc_type, 0.95
-                
+
         return "Retail Receipt", 0.60
 
     def _extract_vendor_name(self, ocr_results: List[OCRResult]) -> tuple:
@@ -1097,13 +1119,13 @@ class SemanticEngine:
     def _extract_customer_info(self, ocr_results: List[OCRResult]) -> dict:
         cust = {"customer_name": None, "customer_company": None, "customer_address": None, "customer_gstin": None}
         headers_pat = re.compile(r'\b(bill\s*to|ship\s*to|customer|buyer|buyer\s*details|client)\b', re.IGNORECASE)
-        
+
         target_res = None
         for res in ocr_results:
             if headers_pat.search(res.text):
                 target_res = res
                 break
-                
+
         if target_res:
             tx1, ty1, tx2, ty2 = target_res.box
             candidates = []
@@ -1114,7 +1136,7 @@ class SemanticEngine:
                 if ry1 > ty1 and ry1 < ty2 + 150 and abs((rx1+rx2)/2.0 - (tx1+tx2)/2.0) < 200:
                     candidates.append(r)
             candidates.sort(key=lambda r: r.box[1])
-            
+
             address_lines = []
             for c in candidates:
                 txt = c.text.strip()
@@ -1132,10 +1154,10 @@ class SemanticEngine:
                 else:
                     if len(txt) > 5 and not any(kw in txt_lower for kw in ["gstin", "gst no"]):
                         address_lines.append(txt)
-                        
+
             if address_lines:
                 cust["customer_address"] = ", ".join(address_lines)
-                
+
         return cust
 
     def _extract_payment_method(self, ocr_results: List[OCRResult]) -> tuple:
@@ -1147,9 +1169,9 @@ class SemanticEngine:
             "bank name", "bank:", "ifsc", "iban", "swift", "routing number", "routing no", "sort code",
             "beneficiary", "pay to:", "payment to:", "deposit to:", "transfer to:"
         ]
-        
+
         candidates = []
-        
+
         # 1. Search for a payment section header
         header_res = None
         for r in ocr_results:
@@ -1159,7 +1181,7 @@ class SemanticEngine:
             if any(hk in txt_low for hk in header_kws) and not any(dk in txt_low for dk in ["account", "invoice", "date", "customer"]):
                 header_res = r
                 break
-                
+
         if header_res:
             hx1, hy1, hx2, hy2 = header_res.box
             for r in ocr_results:
@@ -1176,14 +1198,14 @@ class SemanticEngine:
                         is_aligned = True
                     elif min(rx2, hx2) - max(rx1, hx1) > -50:
                         is_aligned = True
-                        
+
                     if is_aligned:
                         txt_low = r.text.lower()
                         # Exclude unrelated terms to avoid capturing other sections or footers
                         if not any(w in txt_low for w in ["billed to", "ship to", "invoice no", "total", "subtotal", "tax", "gstin", "description", "qty", "amount"]):
                             if r not in candidates:
                                 candidates.append(r)
-                            
+
         # 2. Add any lines that explicitly contain detail keywords
         for r in ocr_results:
             if r.confidence < 0.4:
@@ -1194,13 +1216,13 @@ class SemanticEngine:
                 if not any(w in txt_low for w in ["invoice no", "phone no", "serial no", "s.no"]):
                     if r not in candidates:
                         candidates.append(r)
-                    
+
         # 3. Expand candidates: capture adjacent lines in the same block
         if candidates:
             min_y = min(c.box[1] for c in candidates)
             max_y = max(c.box[3] for c in candidates)
             avg_x1 = sum(c.box[0] for c in candidates) / len(candidates)
-            
+
             additional = []
             for r in ocr_results:
                 if r.confidence < 0.4 or r in candidates or r == header_res:
@@ -1214,7 +1236,7 @@ class SemanticEngine:
             for add_r in additional:
                 if add_r not in candidates:
                     candidates.append(add_r)
-            
+
         if candidates:
             # Sort candidates by vertical position, then by horizontal position
             sorted_candidates = sorted(candidates, key=lambda r: (r.box[1], r.box[0]))
@@ -1224,7 +1246,7 @@ class SemanticEngine:
                 if len(payment_info_str) > 250:
                     payment_info_str = payment_info_str[:247] + "..."
                 return payment_info_str, 95, "Extracted payment/bank details from document"
-                
+
         # 4. Fallback to keyword matching
         payment_kws = {
             "UPI": ["upi", "gpay", "phonepe", "paytm", "bhim"],
@@ -1255,7 +1277,7 @@ class SemanticEngine:
     def _extract_product_table(self, ocr_results: List[OCRResult]) -> List[Dict[str, Any]]:
         items = []
         rows = self._group_ocr_into_rows(ocr_results)
-        
+
         item_headers = {
             'item_name': ['description', 'item', 'product', 'particulars'],
             'quantity': ['qty', 'quantity', 'qty.', 'qnty', 'count', 'nos', 'oty', 'qty/oty'],
@@ -1264,7 +1286,7 @@ class SemanticEngine:
             'tax_amount': ['tax amount', 'gst amount', 'tax amt', 'tax amoun', 'tax value', 'tax amt.', 'tax amt'],
             'line_total': ['total', 'amount', 'total amount', 'net amount', 'value', 'line total', 'amoun', 'amt']
         }
-        
+
         # 1. Identify which rows are header candidates
         header_candidate_indices = []
         for r_idx, row in enumerate(rows):
@@ -1284,7 +1306,7 @@ class SemanticEngine:
                 if matched_any:
                     header_candidate_indices.append(r_idx)
                     break
-                    
+
         # Find main header row index containing item_name keywords
         main_header_idx = -1
         for r_idx in header_candidate_indices:
@@ -1292,26 +1314,26 @@ class SemanticEngine:
             if any(any(kw in cell.text.lower() for kw in ['description', 'particulars', 'item', 'product']) for cell in row):
                 main_header_idx = r_idx
                 break
-                
+
         if main_header_idx == -1:
             return []
-            
+
         # Collect all rows within 35px vertically of the main header row
         header_rows_idx = [main_header_idx]
         main_cy = sum((c.box[1]+c.box[3])/2.0 for c in rows[main_header_idx]) / len(rows[main_header_idx])
-        
+
         for r_idx in header_candidate_indices:
             if r_idx == main_header_idx:
                 continue
             cy = sum((c.box[1]+c.box[3])/2.0 for c in rows[r_idx]) / len(rows[r_idx])
             if abs(cy - main_cy) < 35:
                 header_rows_idx.append(r_idx)
-                
+
         # Merge vertically aligned cells in the header rows
         all_header_cells = []
         for r_idx in header_rows_idx:
             all_header_cells.extend(rows[r_idx])
-            
+
         merged_header_cells = []
         used_cell_ids = set()
         for cell1 in sorted(all_header_cells, key=lambda c: c.box[1]):
@@ -1347,7 +1369,7 @@ class SemanticEngine:
             else:
                 merged_header_cells.append(cell1)
                 used_cell_ids.add(cell1.region_id)
-                
+
         # Now find matching column headers in merged_header_cells
         headers_found = {}
         for cell in merged_header_cells:
@@ -1365,13 +1387,13 @@ class SemanticEngine:
                         'x2': cell.box[2],
                         'cx': (cell.box[0] + cell.box[2]) / 2.0
                     }
-                    
+
         # Check if valid
         if len(headers_found) < 2 or ('item_name' not in headers_found and 'line_total' not in headers_found):
             return []
-            
+
         header_row_idx = max(header_rows_idx)
-                
+
         if header_row_idx != -1:
             raw_items = []
             for r_idx in range(header_row_idx + 1, len(rows)):
@@ -1384,7 +1406,7 @@ class SemanticEngine:
                     # If it's a summary row and not a description/product line
                     if len(row) <= 3 and not any(kw in row_text for kw in ['qty', 'rate', 'price', 'description']):
                         break
-                    
+
                 item = {}
                 for col_name, col_meta in headers_found.items():
                     cx = col_meta['cx']
@@ -1396,7 +1418,7 @@ class SemanticEngine:
                         if dist < min_dist:
                             min_dist = dist
                             best_cell = cell
-                            
+
                     if best_cell and min_dist < 120.0:
                         txt = best_cell.text.strip()
                         if col_name == 'item_name':
@@ -1416,10 +1438,10 @@ class SemanticEngine:
                         elif col_name == 'line_total':
                             val = self._extract_amount(txt)
                             item['line_total'] = val if val is not None else 0.0
-                            
+
                 if item and ('item_name' in item or 'line_total' in item):
                     raw_items.append(item)
-            
+
             # Merge multi-line item description anchors
             anchors = []
             current_desc_buffer = []
@@ -1442,10 +1464,10 @@ class SemanticEngine:
                         name = item.get('item_name', '')
                         if name:
                             current_desc_buffer.append(name)
-                            
+
             if current_desc_buffer and not anchors:
                 anchors.append({'item_name': " ".join(current_desc_buffer)})
-                
+
             # Populate fields
             for item in anchors:
                 if 'item_name' not in item:
@@ -1456,10 +1478,10 @@ class SemanticEngine:
                     item['unit_price'] = item['line_total'] / item['quantity']
                 if 'line_total' not in item and 'unit_price' in item:
                     item['line_total'] = item['unit_price'] * item['quantity']
-                    
+
                 hsn_match = re.search(r'\b(?:hsn|sac)(?:\s*code)?\s*[:\-\s]?\s*([a-z0-9]{4,10})\b', item.get('item_name', '').lower())
                 hsn = hsn_match.group(1).upper() if hsn_match else None
-                
+
                 items.append({
                     "item_name": item.get('item_name', 'Unknown Item'),
                     "item_description": item.get('item_name', ''),
@@ -1492,7 +1514,7 @@ class SemanticEngine:
                 match = self._find_neighbor_value(res, ocr_results, 'amount')
                 if match and abs(match[0] - target_value) < 0.01:
                     return match[0]
-                    
+
         for res in ocr_results:
             val = self._extract_amount(res.text)
             if val is not None and abs(val - target_value) < 0.01:
@@ -1680,10 +1702,8 @@ class SemanticEngine:
                         else:
                             val_str = val_str.replace(',', '')
                     elif '.' in val_str and ',' not in val_str:
-                        dot_idx = val_str.rfind('.')
-                        digits_after = len(val_str) - dot_idx - 1
-                        if digits_after == 3:
-                            val_str = val_str.replace('.', '')
+                        # Standard decimal point, do not remove/replace the dot
+                        pass
                     else:
                         val_str = val_str.replace(',', '')
                     return float(val_str)
@@ -1692,6 +1712,14 @@ class SemanticEngine:
         return None
 
     def _is_tax_or_discount_total(self, text: str) -> bool:
+        """
+        FIXED (audit Bug #3/#5): this list previously only excluded
+        tax/discount phrases containing the word "total". Retail and mall
+        receipts routinely contain "Total Savings", "MRP Total", and
+        "Round Off" lines that also contain "total" but are never the
+        invoice's grand total — those were free to compete for the
+        invoice_total slot. They are now excluded here too.
+        """
         text_lower = text.lower()
         tax_phrases = [
             'total tax', 'tax total', 'total tax amount',
@@ -1700,7 +1728,10 @@ class SemanticEngine:
             'total igst', 'igst total',
             'total cess', 'cess total',
             'total discount', 'discount total',
-            'total gst', 'gst total'
+            'total gst', 'gst total',
+            'total savings', 'savings total', 'you saved', 'you save',
+            'mrp total', 'total mrp', 'total items', 'item total',
+            'round off', 'roundoff', 'total qty', 'total quantity',
         ]
         return any(p in text_lower for p in tax_phrases)
 
@@ -1717,10 +1748,10 @@ class SemanticEngine:
             if amt >= 10000000 and float(amt).is_integer():
                 continue
             filtered_amounts.append((amt, box, conf))
-        
+
         if not filtered_amounts:
             filtered_amounts = amounts  # Fallback if we filtered everything
-            
+
         # If we have subtotal and tax_amount in classified, we can use them to find the best matching total
         if classified and filtered_amounts:
             subtotal = classified.get('subtotal', {}).get('value')
@@ -1782,7 +1813,7 @@ class SemanticEngine:
             val = None
             conf = 0.0
             text = other.text.strip()
-            
+
             if expected_type == 'amount':
                 val = self._extract_amount(text)
                 conf = 0.85
@@ -1847,12 +1878,12 @@ class SemanticEngine:
         table_fields = {}
         rows = self._group_ocr_into_rows(ocr_results)
         header_rows = self._find_table_header_rows(rows)
-        
+
         for header_info in header_rows:
             parsed_rows = self._parse_table_rows(header_info, rows)
             if not parsed_rows:
                 continue
-                
+
             best_row_info = None
             for p_row in parsed_rows:
                 r_idx = p_row['row_idx']
@@ -1860,12 +1891,12 @@ class SemanticEngine:
                 if any("total" in cell.text.lower() and not "subtotal" in cell.text.lower() for cell in row_cells):
                     best_row_info = p_row
                     break
-                    
+
             if not best_row_info:
                 best_row_info = parsed_rows[-1]
-                
+
             best_row = best_row_info['values']
-            
+
             field_mapping = {
                 'cgst': 'cgst_amount',
                 'sgst': 'sgst_amount',
@@ -1873,7 +1904,7 @@ class SemanticEngine:
                 'taxable': 'subtotal',
                 'total': 'invoice_total'
             }
-            
+
             for col_name, field_name in field_mapping.items():
                 if col_name in best_row:
                     val = best_row[col_name]['value']
@@ -1924,7 +1955,7 @@ class SemanticEngine:
             'taxable': ['taxable', 'taxable value', 'taxable amount', 'net value', 'net amount'],
             'total': ['total amount', 'total', 'grand total', 'total value']
         }
-        
+
         for row_idx, row in enumerate(rows):
             headers = {}
             for col_idx, res in enumerate(row):
@@ -1956,7 +1987,7 @@ class SemanticEngine:
                 rx1, ry1, rx2, ry2 = res.box
                 width = rx2 - rx1
                 total_chars = len(text)
-                
+
                 char_idx = 0
                 for token in tokens:
                     token_len = len(token)
@@ -1965,13 +1996,13 @@ class SemanticEngine:
                         start_char = char_idx
                     end_char = start_char + token_len
                     char_idx = end_char
-                    
+
                     if total_chars > 0:
                         tx1 = rx1 + (start_char / total_chars) * width
                         tx2 = rx1 + (end_char / total_chars) * width
                     else:
                         tx1, tx2 = rx1, rx2
-                        
+
                     virtual_box = [tx1, ry1, tx2, ry2]
                     split_row.append(OCRResult(
                         region_id=res.region_id,
@@ -1989,9 +2020,9 @@ class SemanticEngine:
         header_idx = header_info['row_idx']
         headers = header_info['headers']
         parsed_data = []
-        
+
         prev_y_center = sum((c.box[1] + c.box[3]) / 2.0 for c in rows[header_idx]) / len(rows[header_idx]) if rows[header_idx] else 0.0
-        
+
         for r_idx in range(header_idx + 1, len(rows)):
             row = self._split_merged_cells(rows[r_idx])
             if not row:
@@ -2000,19 +2031,19 @@ class SemanticEngine:
             if prev_y_center > 0.0 and (curr_y_center - prev_y_center) > 120.0:
                 break
             prev_y_center = curr_y_center
-            
+
             row_text_combined = " ".join(res.text for res in row).lower()
             if any(term in row_text_combined for term in ['tender detail', 'payment method', 'authorized', 'signatory', 'terms', 'conditions']):
                 break
-                
+
             row_values = {}
             matched_cols = 0
-            
+
             for col_name, col_meta in headers.items():
                 cx = col_meta['cx']
                 col_width = col_meta['x2'] - col_meta['x1']
                 tolerance = max(50.0, col_width * 0.8)
-                
+
                 for res in row:
                     rx1, ry1, rx2, ry2 = res.box
                     rcx = (rx1 + rx2) / 2.0
@@ -2022,7 +2053,7 @@ class SemanticEngine:
                         is_aligned = True
                     elif abs(rcx - cx) < tolerance:
                         is_aligned = True
-                        
+
                     if is_aligned:
                         val = self._extract_amount(res.text)
                         if val is not None:
@@ -2032,7 +2063,7 @@ class SemanticEngine:
                             }
                             matched_cols += 1
                             break
-                            
+
             if matched_cols >= 2:
                 parsed_data.append({
                     'row_idx': r_idx,
