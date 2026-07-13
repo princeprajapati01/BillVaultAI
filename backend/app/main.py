@@ -56,7 +56,7 @@ def startup_event():
                 ("transaction_id", "VARCHAR(100) NULL"),
                 ("notes", "TEXT NULL"),
                 ("due_date", "VARCHAR(100) NULL"),
-                ("payment_terms", "VARCHAR(100) NULL"),
+                ("payment_terms", "TEXT NULL"),
                 ("balance_due", "DOUBLE NULL"),
                 ("amount_paid", "DOUBLE NULL"),
                 ("payment_status", "VARCHAR(50) NULL"),

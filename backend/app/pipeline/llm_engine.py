@@ -3,7 +3,7 @@ import base64
 import json
 import logging
 import re
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, NamedTuple
 from app.core.config import (
     HUGGINGFACE_API_KEY,
     HUGGINGFACE_MODEL,
@@ -44,6 +44,52 @@ _POS_NOISE_LINE = re.compile(
 )
 _GSTIN_VALID = re.compile(
     r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$',
+    re.IGNORECASE,
+)
+
+# ---------------------------------------------------------------------------
+# Subtotal extraction — label-based candidates + mathematical validation.
+#
+# FIXED: subtotal was previously derived as "the largest OCR amount smaller
+# than the grand total", overridden only if a line happened to contain the
+# word 'taxable', 'sub total', or 'subtotal'. That guessed right by luck on
+# simple invoices and silently guessed wrong whenever a savings/MRP/rounding
+# line, a line-item amount, or an unrelated number happened to be the
+# largest sub-grand-total value on the page. The functions below replace
+# that entirely with: (1) only ever consider amounts on lines carrying an
+# actual subtotal-family label, (2) never consider amounts on lines that are
+# clearly something else (MRP Total, Savings, Discount, Round Off, any
+# *-Total tax line), (3) validate every candidate against
+# subtotal + tax ≈ grand_total when tax is known, and (4) return None rather
+# than a guess when nothing scores above a minimum confidence bar.
+# ---------------------------------------------------------------------------
+
+class _SubtotalCandidate(NamedTuple):
+    value: float
+    label: str
+    base_confidence: int
+    line: str
+
+
+# Labels that genuinely indicate a subtotal / pre-tax amount. Ordered by how
+# unambiguous the label is; "Net Amount" and "Basic Amount" occasionally
+# refer to the grand total on some non-GST templates, so they start lower
+# and rely on the math check in `_score_subtotal_candidate` to confirm them.
+_SUBTOTAL_LABEL_PATTERNS: Tuple[Tuple[re.Pattern, int, str], ...] = (
+    (re.compile(r'\bsub[\s\-]*total\b', re.IGNORECASE), 95, 'Sub Total'),
+    (re.compile(r'\btaxable\s*value\b', re.IGNORECASE), 92, 'Taxable Value'),
+    (re.compile(r'\btaxable\s*amount\b', re.IGNORECASE), 92, 'Taxable Amount'),
+    (re.compile(r'\bassessable\s*value\b', re.IGNORECASE), 90, 'Assessable Value'),
+    (re.compile(r'\bbasic\s*amount\b', re.IGNORECASE), 75, 'Basic Amount'),
+    (re.compile(r'\bnet\s*amount\b', re.IGNORECASE), 70, 'Net Amount'),
+)
+
+# Lines matching any of these must NEVER be treated as a subtotal candidate,
+# even though some of them also contain amount-like numbers.
+_SUBTOTAL_EXCLUDED_LABEL_PATTERN = re.compile(
+    r'\b(mrp\s*total|total\s*mrp|savings?|you\s*saved|you\s*save|discount|'
+    r'round\s*off|roundoff|tax\s*total|total\s*tax|cgst\s*total|total\s*cgst|'
+    r'sgst\s*total|total\s*sgst|igst\s*total|total\s*igst)\b',
     re.IGNORECASE,
 )
 
@@ -298,6 +344,105 @@ def _collect_ocr_amount_candidates(raw_ocr: str) -> List[Tuple[float, str, int]]
     return candidates
 
 
+def _collect_subtotal_candidates(raw_ocr: str) -> List[_SubtotalCandidate]:
+    """Scan OCR text line by line for genuine subtotal-family labels.
+
+    A line is skipped entirely if it matches the exclusion pattern (MRP
+    Total, Savings, Discount, Round Off, any *-Total tax line) — those never
+    become subtotal candidates regardless of what number is on them.
+    """
+    candidates: List[_SubtotalCandidate] = []
+
+    for line in raw_ocr.splitlines():
+        line_stripped = line.strip()
+        if not line_stripped or _POS_NOISE_LINE.search(line_stripped):
+            continue
+        if _SUBTOTAL_EXCLUDED_LABEL_PATTERN.search(line_stripped):
+            continue
+
+        for label_pat, base_conf, label_name in _SUBTOTAL_LABEL_PATTERNS:
+            if not label_pat.search(line_stripped):
+                continue
+
+            amt: Optional[float] = None
+            for pat in PATTERNS['amount']:
+                m = pat.search(line_stripped)
+                if m:
+                    parsed = _parse_amount_str(m.group(1))
+                    if parsed is not None and parsed > 0:
+                        amt = parsed
+                        break
+
+            if amt is not None and not _is_pos_terminal_number(amt, raw_ocr):
+                candidates.append(_SubtotalCandidate(
+                    value=amt, label=label_name, base_confidence=base_conf, line=line_stripped
+                ))
+            break  # one label match per line is enough
+
+    return candidates
+
+
+def _score_subtotal_candidate(
+    candidate: _SubtotalCandidate,
+    grand_total: Optional[float],
+    tax_amount: Optional[float],
+) -> Tuple[float, str]:
+    """Score a subtotal candidate using its label confidence plus
+    mathematical consistency against grand_total/tax_amount when available."""
+    score = float(candidate.base_confidence)
+    reason = [candidate.label]
+
+    if grand_total is not None and grand_total > 0:
+        if candidate.value > grand_total * 1.02:
+            # A subtotal should never meaningfully exceed the grand total.
+            score -= 50.0
+            reason.append("ExceedsTotal")
+        elif tax_amount is not None and tax_amount >= 0:
+            expected_total = candidate.value + tax_amount
+            rel_err = abs(expected_total - grand_total) / max(grand_total, 1.0)
+            if rel_err < 0.01:
+                score += 30.0
+                reason.append("MathExact")
+            elif rel_err < 0.03:
+                score += 15.0
+                reason.append("MathClose")
+            elif rel_err > 0.15:
+                score -= 30.0
+                reason.append("MathMismatch")
+        elif candidate.value < grand_total:
+            # No tax figure known yet — weak positive signal only.
+            score += 5.0
+            reason.append("BelowTotal")
+
+    score = max(0.0, min(100.0, score))
+    return score, "+".join(reason)
+
+
+def _select_best_subtotal(
+    raw_ocr: str,
+    grand_total: Optional[float],
+    tax_amount: Optional[float],
+    min_score: float = 60.0,
+) -> Tuple[Optional[float], Optional[int], str]:
+    """Pick the best-scoring subtotal candidate, or (None, None, reason) if
+    nothing reliable was found — never guesses."""
+    candidates = _collect_subtotal_candidates(raw_ocr)
+    if not candidates:
+        return None, None, "No labeled subtotal candidate found in OCR text"
+
+    scored = [
+        (*_score_subtotal_candidate(c, grand_total, tax_amount), c)
+        for c in candidates
+    ]
+    scored.sort(key=lambda x: x[0], reverse=True)
+    best_score, best_reason, best_candidate = scored[0]
+
+    if best_score < min_score:
+        return None, None, f"Best candidate ({best_candidate.label}={best_candidate.value}) scored {best_score:.0f} < {min_score:.0f}"
+
+    return best_candidate.value, int(best_score), best_reason
+
+
 def extract_ocr_hints(raw_ocr_text: str) -> Dict[str, Any]:
     """Derive high-confidence fields from OCR text (used to fix LLM mistakes)."""
     text = raw_ocr_text or ""
@@ -345,17 +490,9 @@ def extract_ocr_hints(raw_ocr_text: str) -> Dict[str, Any]:
     if amount_candidates:
         hints['grand_total'] = amount_candidates[0][0]
         hints['grand_total_confidence'] = min(95, 60 + amount_candidates[0][2] // 3)
-        if len(amount_candidates) > 1:
-            smaller = [a for a, _, p in amount_candidates if a < hints['grand_total']]
-            if smaller:
-                hints['subtotal'] = max(smaller)
-        for amt, line, _ in amount_candidates:
-            ll = line.lower()
-            if 'taxable' in ll or 'sub total' in ll or 'subtotal' in ll:
-                hints['subtotal'] = amt
-                hints['subtotal_confidence'] = 90
-                break
 
+    # Tax lines (Indian retail) — computed BEFORE subtotal selection so the
+    # subtotal + tax ≈ grand_total math check below has tax_amount available.
     for line in text.splitlines():
         ll = line.lower()
         if 'cgst' in ll and 'sgst' not in ll:
@@ -375,6 +512,22 @@ def extract_ocr_hints(raw_ocr_text: str) -> Dict[str, Any]:
 
     if hints.get('cgst_amount') and hints.get('sgst_amount'):
         hints['tax_amount'] = hints['cgst_amount'] + hints['sgst_amount']
+
+    # Subtotal — FIXED: label-based candidate extraction, exclusion of
+    # savings/MRP/discount/round-off/tax-total lines, mathematical
+    # validation against grand_total/tax_amount, and no guessing when
+    # nothing reliable is found (see _select_best_subtotal docstring).
+    subtotal_val, subtotal_conf, subtotal_reason = _select_best_subtotal(
+        text,
+        grand_total=hints.get('grand_total'),
+        tax_amount=hints.get('tax_amount'),
+    )
+    if subtotal_val is not None:
+        hints['subtotal'] = subtotal_val
+        hints['subtotal_confidence'] = subtotal_conf
+        logger.info("Subtotal hint selected: %.2f (%s)", subtotal_val, subtotal_reason)
+    else:
+        logger.info("No reliable subtotal hint: %s", subtotal_reason)
 
     if re.search(r'\bupi\b', text, re.I):
         hints['payment_method'] = 'UPI'

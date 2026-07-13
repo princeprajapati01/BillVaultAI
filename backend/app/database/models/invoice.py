@@ -27,7 +27,7 @@ class Bill(Base):
     category = Column(String(100), default="Office")
     status = Column(String(50), default="processed")
     due_date = Column(String(100), nullable=True)
-    payment_terms = Column(String(100), nullable=True)
+    payment_terms = Column(Text, nullable=True)
     balance_due = Column(Float, nullable=True, default=0.0)
     amount_paid = Column(Float, nullable=True, default=0.0)
     payment_status = Column(String(50), default="UNKNOWN")

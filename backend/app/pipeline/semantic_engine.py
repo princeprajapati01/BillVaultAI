@@ -607,7 +607,7 @@ class SemanticEngine:
 
             # Collect amounts
             amt = self._extract_amount(text)
-            if amt and not 'gstin' in text.lower():
+            if amt and not 'gstin' in text.lower() and not self._is_tax_or_discount_total(text.lower()):
                 is_quantity_row = False
                 for row in grouped_rows:
                     if result in row:
@@ -1581,14 +1581,14 @@ class SemanticEngine:
 
         # --- Total (keyword-based) ---
         if not is_terms_sentence and any(k in text_lower for k in KEYWORDS['total']):
-            if not _is_subtotal_label(text_lower):
+            if not _is_subtotal_label(text_lower) and not self._is_tax_or_discount_total(text_lower):
                 if not any(q in text_lower for q in ['qty', 'quantity', 'item', 'piece', 'pcs', 'count', 'weight', 'wt']):
                     amt = self._extract_amount(text)
                     if amt:
                         return 'invoice_total', amt, 0.92
 
         # --- Subtotal ---
-        if not is_terms_sentence and any(k in text_lower for k in KEYWORDS['subtotal']):
+        if not is_terms_sentence and any(k in text_lower for k in KEYWORDS['subtotal']) and not self._is_tax_or_discount_total(text_lower):
             amt = self._extract_amount(text)
             if amt:
                 return 'subtotal', amt, 0.88
@@ -1644,6 +1644,8 @@ class SemanticEngine:
             }
             exp_type = field_types.get(nlp_field)
             if exp_type == 'amount':
+                if nlp_field in ('invoice_total', 'subtotal') and self._is_tax_or_discount_total(text_lower):
+                    return None, None, 0.0
                 amt = self._extract_amount(text)
                 if amt:
                     return nlp_field, amt, 0.70
