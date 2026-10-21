@@ -1,14 +1,24 @@
 'use client'
 
-import { Bell, Search, Settings } from 'lucide-react'
+import { Bell, Search, Settings, LogOut } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { motion } from 'framer-motion'
 import { useSidebarStore } from '@/store/useStore'
+import { usePathname, useRouter } from 'next/navigation'
 
 export default function Header() {
+  const pathname = usePathname()
+  const router = useRouter()
   const { isCollapsed } = useSidebarStore()
+
+  if (pathname === '/login') return null
+
+  const handleLogout = () => {
+    localStorage.removeItem('admin_token')
+    router.push('/login')
+  }
 
   return (
     <motion.header
@@ -41,8 +51,18 @@ export default function Header() {
           <Button variant="ghost" size="icon">
             <Settings className="w-5 h-5" />
           </Button>
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={handleLogout} 
+            className="text-slate-400 hover:text-red-400 gap-1.5 ml-1"
+          >
+            <LogOut className="w-4 h-4" />
+            <span className="text-xs font-medium">Logout</span>
+          </Button>
         </div>
       </div>
     </motion.header>
   )
 }
+

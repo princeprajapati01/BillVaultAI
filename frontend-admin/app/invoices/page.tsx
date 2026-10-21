@@ -8,6 +8,9 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { formatCurrency } from '@/lib/utils'
+import { useRouter } from 'next/navigation'
+import { API_URL, getFullImageUrl } from '@/lib/api'
+
 
 const statusConfig = {
   processed: { variant: 'success' as const, label: 'Processed' },
@@ -16,48 +19,37 @@ const statusConfig = {
 }
 
 export default function InvoicesPage() {
+  const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [invoices, setInvoices] = useState<any[]>([])
   const [searchQuery, setSearchQuery] = useState('')
 
   const loadInvoices = async () => {
-    let token = localStorage.getItem('admin_token')
+    const token = localStorage.getItem('admin_token')
     if (!token) {
-      try {
-        const authRes = await fetch('http://localhost:8000/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: 'admin@example.com', password: 'admin123' })
-        })
-        if (authRes.ok) {
-          const authData = await authRes.json()
-          const accessToken = authData.access_token
-          if (accessToken) {
-            token = accessToken
-            localStorage.setItem('admin_token', accessToken)
-          }
-        }
-      } catch (e) {
-        console.error(e)
-      }
+      router.push('/login')
+      return
     }
 
-    if (token) {
-      try {
-        const res = await fetch('http://localhost:8000/api/admin/bills', {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        })
-        if (res.ok) {
-          const data = await res.json()
-          setInvoices(data)
+    try {
+      const res = await fetch(`${API_URL}/api/admin/bills`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
         }
-      } catch (e) {
-        console.error(e)
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setInvoices(data)
+      } else {
+        localStorage.removeItem('admin_token')
+        router.push('/login')
+        return
       }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   useEffect(() => {
@@ -67,10 +59,13 @@ export default function InvoicesPage() {
   const handleDelete = async (id: number) => {
     if (!window.confirm(`Are you sure you want to delete invoice #${id}?`)) return
     const token = localStorage.getItem('admin_token')
-    if (!token) return
+    if (!token) {
+      router.push('/login')
+      return
+    }
 
     try {
-      const res = await fetch(`http://localhost:8000/api/bills/${id}`, {
+      const res = await fetch(`${API_URL}/api/bills/${id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -86,6 +81,7 @@ export default function InvoicesPage() {
       console.error(e)
     }
   }
+
 
   // Statistics calculations
   const totalInvoices = invoices.length
@@ -253,8 +249,9 @@ export default function InvoicesPage() {
                           <td className="py-4 px-4 text-right">
                             <div className="flex items-center justify-end gap-2">
                               {invoice.imageUrl && (
-                                <a href={invoice.imageUrl} target="_blank" rel="noreferrer">
+                                <a href={getFullImageUrl(invoice.imageUrl)} target="_blank" rel="noreferrer">
                                   <Button variant="ghost" size="icon" className="text-slate-400 hover:text-slate-200">
+
                                     <Eye className="w-4 h-4" />
                                   </Button>
                                 </a>

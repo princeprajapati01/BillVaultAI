@@ -8,8 +8,13 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
+import { useRouter } from 'next/navigation'
+import { API_URL } from '@/lib/api'
+
 export default function APIManagementPage() {
+  const router = useRouter()
   const [loading, setLoading] = useState(true)
+
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<string>('all')
   const [selectedEndpoint, setSelectedEndpoint] = useState<number>(0)
@@ -23,43 +28,31 @@ export default function APIManagementPage() {
   })
 
   const loadAPIData = async () => {
-    let token = localStorage.getItem('admin_token')
+    const token = localStorage.getItem('admin_token')
     if (!token) {
-      try {
-        const authRes = await fetch('http://localhost:8000/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: 'admin@example.com', password: 'admin123' })
-        })
-        if (authRes.ok) {
-          const authData = await authRes.json()
-          const accessToken = authData.access_token
-          if (accessToken) {
-            token = accessToken
-            localStorage.setItem('admin_token', accessToken)
-          }
-        }
-      } catch (e) {
-        console.error(e)
-      }
+      router.push('/login')
+      return
     }
 
-    if (token) {
-      try {
-        const res = await fetch('http://localhost:8000/api/admin/api-analytics', {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        })
-        if (res.ok) {
-          const resData = await res.json()
-          setData(resData)
+    try {
+      const res = await fetch(`${API_URL}/api/admin/api-analytics`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
         }
-      } catch (e) {
-        console.error(e)
+      })
+      if (res.ok) {
+        const resData = await res.json()
+        setData(resData)
+      } else {
+        localStorage.removeItem('admin_token')
+        router.push('/login')
+        return
       }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   useEffect(() => {
@@ -80,9 +73,10 @@ export default function APIManagementPage() {
         bodyStr = endpoint.body.map((b: any) => `-F "${b.field}=@file.pdf"`).join(' ')
       }
     }
-    const curl = `curl -X ${endpoint.method} "http://localhost:8000${endpoint.path}" ${headerStr} ${bodyStr}`
+    const curl = `curl -X ${endpoint.method} "${API_URL}${endpoint.path}" ${headerStr} ${bodyStr}`
     navigator.clipboard.writeText(curl)
     setCopiedIndex(index)
+
     setTimeout(() => setCopiedIndex(null), 2000)
   }
 

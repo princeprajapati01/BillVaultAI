@@ -126,37 +126,39 @@ class GoogleLoginRequest(BaseModel):
 
 @router.post("/google", response_model=Token)
 async def google_login(payload: GoogleLoginRequest, db: Session = Depends(get_db)):
-    # 1. Handle mock token for local testing if needed
-    if payload.access_token.startswith("mock_google_token_"):
-        email = payload.access_token.replace("mock_google_token_", "")
-        name = email.split("@")[0].title()
-    else:
-        # 2. Call Google API to verify access token
-        import httpx
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"https://www.googleapis.com/oauth2/v3/userinfo?access_token={payload.access_token}"
-                )
-                if response.status_code != 200:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Invalid Google access token"
-                    )
-                user_info = response.json()
-                email = user_info.get("email")
-                name = user_info.get("name", email.split("@")[0].title())
-                if not email:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Google account must have an email address"
-                    )
-        except httpx.RequestError as e:
-            logger.error(f"Error calling Google UserInfo API: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Failed to contact Google identity provider"
+    if not payload.access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Access token is required"
+        )
+
+    # 1. Call Google API to verify access token
+    import httpx
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://www.googleapis.com/oauth2/v3/userinfo?access_token={payload.access_token}"
             )
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid Google access token"
+                )
+            user_info = response.json()
+            email = user_info.get("email")
+            name = user_info.get("name", email.split("@")[0].title() if email else "User")
+            if not email:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Google account must have an email address"
+                )
+    except httpx.RequestError as e:
+        logger.error(f"Error calling Google UserInfo API: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to contact Google identity provider"
+        )
+
 
     # 3. Check if user exists, else register them
     user = db.query(User).filter(User.email == email).first()
@@ -293,19 +295,8 @@ async def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(
     user.otp_expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=10)
     db.commit()
 
-    # Log to local file for developer preview
-    otp_log_path = r"C:\Users\princ\.gemini\antigravity\brain\5673f794-be02-4dfb-89cf-d9bd8508387f\otp_logs.txt"
-    try:
-        import os
-        os.makedirs(os.path.dirname(otp_log_path), exist_ok=True)
-        with open(otp_log_path, "a") as f:
-            f.write(f"[{datetime.datetime.utcnow().isoformat()}] OTP for {payload.email}: {otp}\n")
-    except Exception as e:
-        logger.error(f"Failed to write OTP to log file: {e}")
+    logger.info(f"Generated password reset OTP for {payload.email}")
 
-    # Log to console
-    logger.info(f"Generated OTP for {payload.email}: {otp}")
-    print(f"\n=========================================\n[OTP DEBUG LOG] OTP for {payload.email}: {otp}\n=========================================\n")
 
     # Send via SMTP if configured
     if SMTP_USER and SMTP_PASS:

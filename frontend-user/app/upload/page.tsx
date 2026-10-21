@@ -14,6 +14,8 @@ import {
   Sparkles,
   FileText
 } from 'lucide-react'
+import { API_URL } from '@/lib/api'
+
 
 // Convert dataURL to Blob
 function dataURLtoBlob(dataurl: string) {
@@ -90,13 +92,14 @@ export default function UploadScreen() {
       formData.append('file', selectedFile, selectedFile.name)
 
       // Call backend API with token auth
-      const response = await fetch('http://localhost:8000/process/document', {
+      const response = await fetch(`${API_URL}/process/document`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
         },
         body: formData,
       })
+
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}))

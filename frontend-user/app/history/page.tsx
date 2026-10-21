@@ -14,10 +14,11 @@ import {
   ChevronRight,
   TrendingUp,
   FileText,
-  DollarSign,
+  IndianRupee,
   Plus,
   BarChart3
 } from 'lucide-react'
+import { API_URL } from '@/lib/api'
 
 const categories = ['All', 'Office', 'Travel', 'Food', 'Others']
 const statusFilters = ['All', 'Processed', 'Processing', 'Failed']
@@ -40,11 +41,12 @@ export default function HistoryScreen() {
 
     async function loadHistory(isPoll = false) {
       try {
-        const res = await fetch('http://localhost:8000/api/bills', {
+        const res = await fetch(`${API_URL}/api/bills`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
         })
+
         if (!res.ok) {
           throw new Error('Failed to load history')
         }
@@ -227,7 +229,7 @@ export default function HistoryScreen() {
               <p className="text-xs text-blue-700">Total Bills</p>
             </div>
             <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-xl p-3">
-              <DollarSign className="w-5 h-5 text-emerald-600 mb-1" />
+              <IndianRupee className="w-5 h-5 text-emerald-600 mb-1" />
               <p className="text-lg font-bold text-emerald-900">
                 ₹{bills.reduce((sum, bill) => sum + bill.amount, 0).toFixed(2)}
               </p>

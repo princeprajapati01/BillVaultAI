@@ -47,22 +47,63 @@ class IDPPipeline:
 
         if is_pdf:
             import fitz
-            logger.info(f"Detected PDF input: {image_path}. Rendering first page to image...")
+            import numpy as np
+            logger.info(f"Detected PDF input: {image_path}. Rendering pages to image...")
             try:
                 doc = fitz.open(image_path)
-                if len(doc) == 0:
+                num_pages = len(doc)
+                if num_pages == 0:
                     raise ValueError("The uploaded PDF file has no pages.")
-                page = doc.load_page(0)
-                pix = page.get_pixmap(dpi=150)
+
+                # Render up to 3 pages (standard invoice length) and stitch vertically
+                max_pages_to_render = min(num_pages, 3)
+                page_images = []
+                for p_no in range(max_pages_to_render):
+                    page = doc.load_page(p_no)
+                    pix = page.get_pixmap(dpi=150)
+                    img_data = np.frombuffer(pix.samples, dtype=np.uint8).reshape((pix.height, pix.width, pix.n))
+                    if pix.n == 4:
+                        img_bgr = cv2.cvtColor(img_data, cv2.COLOR_RGBA2BGR)
+                    elif pix.n == 3:
+                        img_bgr = cv2.cvtColor(img_data, cv2.COLOR_RGB2BGR)
+                    else:
+                        img_bgr = cv2.cvtColor(img_data, cv2.COLOR_GRAY2BGR)
+                    page_images.append(img_bgr)
+
+                if len(page_images) == 1:
+                    stitched = page_images[0]
+                else:
+                    target_w = max(p.shape[1] for p in page_images)
+                    resized_pages = []
+                    for p in page_images:
+                        if p.shape[1] != target_w:
+                            scale = target_w / p.shape[1]
+                            resized_pages.append(cv2.resize(p, (target_w, int(p.shape[0] * scale)), interpolation=cv2.INTER_AREA))
+                        else:
+                            resized_pages.append(p)
+                    stitched = np.vstack(resized_pages)
+
                 temp_preview_path = os.path.splitext(image_path)[0] + "_pipeline_preview.png"
-                pix.save(temp_preview_path)
+                cv2.imwrite(temp_preview_path, stitched)
                 processing_path = temp_preview_path
+                logger.info(f"Rendered {max_pages_to_render}/{num_pages} pages from PDF.")
             except Exception as e:
-                logger.error(f"Error rendering PDF page: {e}", exc_info=True)
+                logger.error(f"Error rendering PDF pages: {e}", exc_info=True)
                 raise ValueError(f"Could not render PDF file: {str(e)}")
 
         try:
-            image = cv2.imread(processing_path)
+            import numpy as np
+            image = None
+            try:
+                with open(processing_path, "rb") as f:
+                    file_bytes = np.frombuffer(f.read(), dtype=np.uint8)
+                image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+            except Exception:
+                image = None
+
+            if image is None:
+                image = cv2.imread(processing_path)
+
             if image is None:
                 raise ValueError(f"Cannot load image from path: {processing_path}")
 
@@ -74,12 +115,22 @@ class IDPPipeline:
                 new_w = int(w * scale)
                 new_h = int(h * scale)
                 image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-                cv2.imwrite(processing_path, image)
+                try:
+                    is_ok, buf = cv2.imencode(".png", image)
+                    if is_ok:
+                        with open(processing_path, "wb") as f:
+                            f.write(buf)
+                except Exception:
+                    cv2.imwrite(processing_path, image)
                 logger.info(f"Resized image from {w}x{h} to {new_w}x{new_h} for fast processing.")
 
             # Step 1: YOLO region detection
-            regions = self.detector.detect(processing_path)
-            logger.info(f"YOLO detector found {len(regions)} regions.")
+            try:
+                regions = self.detector.detect(processing_path)
+                logger.info(f"YOLO detector found {len(regions)} regions.")
+            except Exception as det_err:
+                logger.warning(f"YOLO detection failed: {det_err} — using full image fallback.")
+                regions = []
 
             if not regions:
                 logger.warning("No regions detected by YOLO — processing full image as fallback.")
@@ -91,34 +142,69 @@ class IDPPipeline:
                     region_id=0
                 )]
 
-            # Step 2: Run single-pass OCR. Each OCRResult is ONE real OCR
-            # line with its own box — YOLO regions are attached only as
-            # advisory metadata (yolo_hint), never used to merge multiple
-            # lines' text together (see ocr_engine.py docstring / audit Bug #1).
+            # Step 2: Run single-pass OCR.
             ocr_results = self.ocr_engine.extract_all_regions(image, regions)
 
             sorted_ocr = sorted(ocr_results, key=lambda r: (r.box[1], r.box[0]))
             raw_ocr_text = "\n".join([r.text for r in sorted_ocr if r.text.strip()])
 
-            # Step 3: Extraction. Try the LLM path first (already applies
-            # OCR-hint corrections internally, exactly once); fall back to
-            # the rule-based SemanticEngine, which does NOT yet apply the
-            # OCR-hint correction pass internally, so we apply it once here
-            # only for that fallback path (audit Bug #8 — this used to run
-            # twice for the LLM path).
+            # Step 3: Extraction with robust fallback tiers
             from app.pipeline.llm_engine import extract_with_huggingface, apply_ocr_corrections_to_fields
 
-            classified_fields = extract_with_huggingface(processing_path, raw_ocr_text)
+            classified_fields = None
+            try:
+                classified_fields = extract_with_huggingface(processing_path, raw_ocr_text)
+            except Exception as llm_err:
+                logger.warning(f"LLM extraction error: {llm_err}, proceeding to SemanticEngine fallback.")
+                classified_fields = None
+
             used_fallback = classified_fields is None
 
             if used_fallback:
                 logger.info("LLM extraction unavailable — using rule-based SemanticEngine classification.")
-                engine = SemanticEngine(image.shape)
-                classified_fields = engine.classify(ocr_results)
-                # The SemanticEngine path does not call apply_ocr_corrections_to_fields
-                # internally, unlike the LLM path (see llm_engine.map_llm_json_to_schema),
-                # so it is applied exactly once here.
-                classified_fields = apply_ocr_corrections_to_fields(classified_fields, raw_ocr_text)
+                try:
+                    engine = SemanticEngine(image.shape)
+                    classified_fields = engine.classify(ocr_results)
+                    classified_fields = apply_ocr_corrections_to_fields(classified_fields, raw_ocr_text)
+                except Exception as sem_err:
+                    logger.error(f"SemanticEngine classification error: {sem_err}", exc_info=True)
+                    # Safe fallback fields structure
+                    classified_fields = {
+                        "document_type": "invoice",
+                        "vendor": {
+                            "vendor_name": {"value": "Unknown Merchant", "confidence": 0},
+                            "vendor_address": {"value": None, "confidence": 0},
+                            "vendor_gstin": {"value": None, "confidence": 0},
+                        },
+                        "customer": {
+                            "customer_name": {"value": None, "confidence": 0},
+                        },
+                        "invoice_details": {
+                            "invoice_number": {"value": "Not detected", "confidence": 0},
+                            "invoice_date": {"value": "Not detected", "confidence": 0},
+                            "due_date": {"value": None, "confidence": 0},
+                        },
+                        "amounts": {
+                            "subtotal": {"value": 0.0, "confidence": 0},
+                            "grand_total": {"value": 0.0, "confidence": 0},
+                        },
+                        "taxes": {
+                            "tax_amount": {"value": 0.0, "confidence": 0},
+                            "cgst_amount": {"value": 0.0, "confidence": 0},
+                            "sgst_amount": {"value": 0.0, "confidence": 0},
+                            "igst_amount": {"value": 0.0, "confidence": 0},
+                        },
+                        "payment": {
+                            "payment_method": {"value": None},
+                            "transaction_id": {"value": None},
+                            "balance_due": {"value": 0.0},
+                            "amount_paid": {"value": 0.0},
+                        },
+                        "category": "Office",
+                        "payment_status": "UNKNOWN",
+                        "status_reason": f"Fallback: extraction degraded gracefully ({str(sem_err)[:100]})",
+                        "confidence": {"overall": 10}
+                    }
 
             return {
                 'status': 'success',

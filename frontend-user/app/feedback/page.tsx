@@ -15,6 +15,8 @@ import {
   Sparkles,
   Star
 } from 'lucide-react'
+import { API_URL } from '@/lib/api'
+
 
 const feedbackTypes = [
   { id: 'bug', label: 'Report Bug', icon: Bug, color: 'from-red-500 to-red-600' },
@@ -49,12 +51,13 @@ export default function FeedbackScreen() {
     }
 
     try {
-      const res = await fetch('http://localhost:8000/api/feedback', {
+      const res = await fetch(`${API_URL}/api/feedback`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
+
         body: JSON.stringify({
           rating,
           comment: `[${selectedType.toUpperCase()}] ${message}`

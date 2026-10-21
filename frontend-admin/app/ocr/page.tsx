@@ -8,6 +8,10 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 
+import { useRouter } from 'next/navigation'
+import { API_URL } from '@/lib/api'
+
+
 const statusConfig = {
   processing: { 
     icon: Clock, 
@@ -40,49 +44,39 @@ const statusConfig = {
 } as const
 
 export default function OCRPage() {
+  const router = useRouter()
   const [selectedJob, setSelectedJob] = useState<string | null>(null)
   const [jobs, setJobs] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
   const loadJobs = async () => {
-    let token = localStorage.getItem('admin_token')
+    const token = localStorage.getItem('admin_token')
     if (!token) {
-      try {
-        const authRes = await fetch('http://localhost:8000/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: 'admin@example.com', password: 'admin123' })
-        })
-        if (authRes.ok) {
-          const authData = await authRes.json()
-          const accessToken = authData.access_token
-          if (accessToken) {
-            token = accessToken
-            localStorage.setItem('admin_token', accessToken)
-          }
-        }
-      } catch (e) {
-        console.error(e)
-      }
+      router.push('/login')
+      return
     }
 
-    if (token) {
-      try {
-        const res = await fetch('http://localhost:8000/api/admin/ocr-jobs', {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        })
-        if (res.ok) {
-          const data = await res.json()
-          setJobs(data)
+    try {
+      const res = await fetch(`${API_URL}/api/admin/ocr-jobs`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
         }
-      } catch (e) {
-        console.error(e)
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setJobs(data)
+      } else {
+        localStorage.removeItem('admin_token')
+        router.push('/login')
+        return
       }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
+
 
   useEffect(() => {
     loadJobs()

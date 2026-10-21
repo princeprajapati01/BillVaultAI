@@ -7,9 +7,13 @@ import { Badge } from '@/components/ui/badge'
 import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { API_URL } from '@/lib/api'
 
 export default function SystemHealthPage() {
+  const router = useRouter()
   const [loading, setLoading] = useState(true)
+
   const [data, setData] = useState<any>({
     uptime: '100%',
     cpu_usage: '0%',
@@ -26,44 +30,33 @@ export default function SystemHealthPage() {
   })
 
   const loadSystemHealth = async () => {
-    let token = localStorage.getItem('admin_token')
+    const token = localStorage.getItem('admin_token')
     if (!token) {
-      try {
-        const authRes = await fetch('http://localhost:8000/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: 'admin@example.com', password: 'admin123' })
-        })
-        if (authRes.ok) {
-          const authData = await authRes.json()
-          const accessToken = authData.access_token
-          if (accessToken) {
-            token = accessToken
-            localStorage.setItem('admin_token', accessToken)
-          }
-        }
-      } catch (e) {
-        console.error(e)
-      }
+      router.push('/login')
+      return
     }
 
-    if (token) {
-      try {
-        const res = await fetch('http://localhost:8000/api/admin/system-health', {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        })
-        if (res.ok) {
-          const resData = await res.json()
-          setData(resData)
+    try {
+      const res = await fetch(`${API_URL}/api/admin/system-health`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
         }
-      } catch (e) {
-        console.error(e)
+      })
+      if (res.ok) {
+        const resData = await res.json()
+        setData(resData)
+      } else {
+        localStorage.removeItem('admin_token')
+        router.push('/login')
+        return
       }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
+
 
   useEffect(() => {
     loadSystemHealth()

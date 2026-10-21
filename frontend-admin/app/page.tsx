@@ -6,7 +6,7 @@ import {
   Users, 
   Crown, 
   ScanLine, 
-  DollarSign, 
+  IndianRupee, 
   Target, 
   Activity, 
   Zap, 
@@ -20,9 +20,13 @@ import KPICard from '@/components/KPICard'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
+import { useRouter } from 'next/navigation'
+import { API_URL } from '@/lib/api'
 
 export default function Dashboard() {
+  const router = useRouter()
   const [loading, setLoading] = useState(true)
+
   const [dashboardStats, setDashboardStats] = useState<any>(null)
 
   const [uploadData, setUploadData] = useState<any[]>([])
@@ -32,58 +36,45 @@ export default function Dashboard() {
   const [recentActivity, setRecentActivity] = useState<any[]>([])
 
   useEffect(() => {
-    async function getAdminToken() {
-      let token = localStorage.getItem('admin_token')
+    async function loadAdminData() {
+      const token = localStorage.getItem('admin_token')
       if (!token) {
-        try {
-          const res = await fetch('http://localhost:8000/api/auth/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: 'admin@example.com', password: 'admin123' })
-          })
-          if (res.ok) {
-            const data = await res.json()
-            const accessToken = data.access_token
-            if (accessToken) {
-              token = accessToken
-              localStorage.setItem('admin_token', accessToken)
-            }
-          }
-        } catch (e) {
-          console.error('Admin auto-login failed:', e)
-        }
+        router.push('/login')
+        return
       }
 
-      if (token) {
-        try {
-          const res = await fetch('http://localhost:8000/api/admin/dashboard', {
-            headers: {
-              'Authorization': `Bearer ${token}`
-            }
-          })
-          if (res.ok) {
-            const data = await res.json()
-            setDashboardStats(data)
-            
-            // Set chart data arrays
-            setUploadData(data.upload_trends || [])
-            setRevenueData(data.revenue_trends || [])
-            setAccuracyData(data.accuracy_trends || [])
-            setSubscriptionData(data.subscription_split || [])
-            setRecentActivity(data.recent_activities || [])
-          } else {
-            // If session/token expired, clear it
-            localStorage.removeItem('admin_token')
+      try {
+        const res = await fetch(`${API_URL}/api/admin/dashboard`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
           }
-        } catch (e) {
-          console.error('Failed to load admin stats:', e)
+        })
+        if (res.ok) {
+          const data = await res.json()
+          setDashboardStats(data)
+          
+          // Set chart data arrays
+          setUploadData(data.upload_trends || [])
+          setRevenueData(data.revenue_trends || [])
+          setAccuracyData(data.accuracy_trends || [])
+          setSubscriptionData(data.subscription_split || [])
+          setRecentActivity(data.recent_activities || [])
+        } else {
+          // If session/token expired or unauthorized, redirect to login
+          localStorage.removeItem('admin_token')
+          router.push('/login')
+          return
         }
+      } catch (e) {
+        console.error('Failed to load admin stats:', e)
+      } finally {
+        setLoading(false)
       }
-      setLoading(false)
     }
 
-    getAdminToken()
-  }, [])
+    loadAdminData()
+  }, [router])
+
 
   if (loading) {
     return (
@@ -150,7 +141,7 @@ export default function Dashboard() {
           title="Monthly Revenue"
           value={monthlyRevenue}
           change={monthlyRevenue > 0 ? 100 : 0}
-          icon={DollarSign}
+          icon={IndianRupee}
           color="from-orange-500 to-red-500"
           format="currency"
           delay={0.3}

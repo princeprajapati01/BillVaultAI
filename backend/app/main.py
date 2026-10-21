@@ -4,7 +4,7 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.core.config import YOLO_MODEL_PATH, UPLOADS_DIR
+from app.core.config import YOLO_MODEL_PATH, UPLOADS_DIR, ALLOWED_ORIGINS, SEED_DEFAULT_USERS
 from app.core import pipeline_state
 from app.utils.logger import setup_logging
 from sqlalchemy import text
@@ -25,14 +25,15 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Enable CORS for frontend flexibility
+# Enable CORS for configured frontend origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # Mount static files for uploaded bill images
 os.makedirs(UPLOADS_DIR, exist_ok=True)
@@ -102,56 +103,58 @@ def startup_event():
         finally:
             db_migration_users.close()
         
-        db = SessionLocal()
-        try:
-            # Seed Admin
-            admin_user = db.query(User).filter(User.email == "admin@example.com").first()
-            if not admin_user:
-                admin_user = User(
-                    name="Admin User",
-                    email="admin@example.com",
-                    password_hash=get_password_hash("admin123"),
-                    plan="Enterprise",
-                    is_admin=True,
-                    status="active"
-                )
-                db.add(admin_user)
-                logger.info("Default admin user seeded.")
+        if SEED_DEFAULT_USERS:
+            db = SessionLocal()
+            try:
+                # Seed Admin
+                admin_user = db.query(User).filter(User.email == "admin@example.com").first()
+                if not admin_user:
+                    admin_user = User(
+                        name="Admin User",
+                        email="admin@example.com",
+                        password_hash=get_password_hash("admin123"),
+                        plan="Enterprise",
+                        is_admin=True,
+                        status="active"
+                    )
+                    db.add(admin_user)
+                    logger.info("Default admin user seeded.")
 
-            # Seed Free User
-            free_user = db.query(User).filter(User.email == "user@example.com").first()
-            if not free_user:
-                free_user = User(
-                    name="Alex Johnson",
-                    email="user@example.com",
-                    password_hash=get_password_hash("user123"),
-                    plan="Free",
-                    is_admin=False,
-                    status="active"
-                )
-                db.add(free_user)
-                logger.info("Default free user seeded.")
+                # Seed Free User
+                free_user = db.query(User).filter(User.email == "user@example.com").first()
+                if not free_user:
+                    free_user = User(
+                        name="Alex Johnson",
+                        email="user@example.com",
+                        password_hash=get_password_hash("user123"),
+                        plan="Free",
+                        is_admin=False,
+                        status="active"
+                    )
+                    db.add(free_user)
+                    logger.info("Default free user seeded.")
 
-            # Seed Premium User
-            pro_user = db.query(User).filter(User.email == "premium@example.com").first()
-            if not pro_user:
-                pro_user = User(
-                    name="Sarah Jenkins",
-                    email="premium@example.com",
-                    password_hash=get_password_hash("premium123"),
-                    plan="Pro",
-                    is_admin=False,
-                    status="active"
-                )
-                db.add(pro_user)
-                logger.info("Default premium user seeded.")
+                # Seed Premium User
+                pro_user = db.query(User).filter(User.email == "premium@example.com").first()
+                if not pro_user:
+                    pro_user = User(
+                        name="Sarah Jenkins",
+                        email="premium@example.com",
+                        password_hash=get_password_hash("premium123"),
+                        plan="Pro",
+                        is_admin=False,
+                        status="active"
+                    )
+                    db.add(pro_user)
+                    logger.info("Default premium user seeded.")
 
-            db.commit()
-        except Exception as se:
-            logger.error(f"Failed to seed database: {se}")
-            db.rollback()
-        finally:
-            db.close()
+                db.commit()
+            except Exception as se:
+                logger.error(f"Failed to seed database: {se}")
+                db.rollback()
+            finally:
+                db.close()
+
 
     except Exception as e:
         logger.error(f"Failed to initialize database: {str(e)}")

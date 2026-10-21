@@ -7,7 +7,7 @@ import {
   ArrowLeft,
   TrendingUp,
   FileText,
-  DollarSign,
+  IndianRupee,
   CheckCircle2,
   Clock,
   AlertTriangle,
@@ -23,6 +23,8 @@ import {
   Download
 } from 'lucide-react'
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts'
+import { API_URL } from '@/lib/api'
+
 
 export default function AnalyticsScreen() {
   const router = useRouter()
@@ -38,12 +40,13 @@ export default function AnalyticsScreen() {
     if (!token) return
 
     try {
-      const response = await fetch(`http://localhost:8000/api/bills/${id}`, {
+      const response = await fetch(`${API_URL}/api/bills/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
+
         body: JSON.stringify({
           merchant_name: item.merchant,
           invoice_number: item.invoiceNumber,
@@ -114,11 +117,12 @@ export default function AnalyticsScreen() {
 
     async function loadData() {
       try {
-        const res = await fetch('http://localhost:8000/api/bills', {
+        const res = await fetch(`${API_URL}/api/bills`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
         })
+
         if (!res.ok) throw new Error('Failed to fetch bills')
         const data = await res.json()
         setBills(data)
@@ -324,7 +328,7 @@ export default function AnalyticsScreen() {
 
           <div className="bg-white rounded-2xl p-4 shadow-lg border border-gray-100 flex flex-col justify-between">
             <div className="w-8 h-8 rounded-xl bg-purple-100 flex items-center justify-center text-purple-600 mb-3">
-              <DollarSign className="w-4.5 h-4.5" />
+              <IndianRupee className="w-4.5 h-4.5" />
             </div>
             <div>
               <p className="text-xl font-bold text-gray-900">₹{metrics.totalVolume.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</p>

@@ -7,9 +7,13 @@ import { Badge } from '@/components/ui/badge'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { API_URL } from '@/lib/api'
 
 export default function AIExtractionPage() {
+  const router = useRouter()
   const [loading, setLoading] = useState(true)
+
   const [stats, setStats] = useState<any>({
     overall_accuracy: '0%',
     avg_confidence: '0%',
@@ -22,44 +26,33 @@ export default function AIExtractionPage() {
   })
 
   const loadStats = async () => {
-    let token = localStorage.getItem('admin_token')
+    const token = localStorage.getItem('admin_token')
     if (!token) {
-      try {
-        const authRes = await fetch('http://localhost:8000/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: 'admin@example.com', password: 'admin123' })
-        })
-        if (authRes.ok) {
-          const authData = await authRes.json()
-          const accessToken = authData.access_token
-          if (accessToken) {
-            token = accessToken
-            localStorage.setItem('admin_token', accessToken)
-          }
-        }
-      } catch (e) {
-        console.error(e)
-      }
+      router.push('/login')
+      return
     }
 
-    if (token) {
-      try {
-        const res = await fetch('http://localhost:8000/api/admin/ai-extraction-stats', {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        })
-        if (res.ok) {
-          const data = await res.json()
-          setStats(data)
+    try {
+      const res = await fetch(`${API_URL}/api/admin/ai-extraction-stats`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
         }
-      } catch (e) {
-        console.error(e)
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setStats(data)
+      } else {
+        localStorage.removeItem('admin_token')
+        router.push('/login')
+        return
       }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
+
 
   useEffect(() => {
     loadStats()

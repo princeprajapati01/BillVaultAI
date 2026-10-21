@@ -16,6 +16,10 @@ DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAM
 JWT_SECRET = os.getenv("JWT_SECRET", "aura-idp-secret-key-super-secure-5678-change-in-production")
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 hours
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
+ALLOWED_ORIGINS = [orig.strip() for orig in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001").split(",") if orig.strip()]
+SEED_DEFAULT_USERS = os.getenv("SEED_DEFAULT_USERS", "true").strip().lower() in {"1", "true", "yes", "y", "on"}
+
 
 # YOLO Model Path
 YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "best.pt")
@@ -25,7 +29,7 @@ YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "best.pt")
 ENABLE_ADVANCED_RANKING = os.getenv("ENABLE_ADVANCED_RANKING", "true").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 # Performance knobs
-MAX_CONCURRENT_JOBS = int(os.getenv("MAX_CONCURRENT_JOBS", "3"))
+MAX_CONCURRENT_JOBS = int(os.getenv("MAX_CONCURRENT_JOBS", "1"))
 
 # SQLAlchemy pool knobs (defaults match SQLAlchemy defaults)
 DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "5"))
@@ -50,10 +54,13 @@ SMTP_FROM = os.getenv("SMTP_FROM", "")
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY", "").strip()
 HUGGINGFACE_MODEL = os.getenv("HUGGINGFACE_MODEL", "Qwen/Qwen2.5-VL-72B-Instruct").strip()
 
-# Local Ollama Configurations (used by app.pipeline.llm_engine as the
-# primary extraction path when a local vision-language model is preferred
-# over the Hugging Face-hosted API).
+# Google Gemini Configurations (Free on Google AI Studio: https://aistudio.google.com)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
+
+# Local Ollama Configurations (used by app.pipeline.llm_engine as fallback or local alternative)
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip().rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5vl:3b").strip()
-OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "120"))
-OLLAMA_HEALTHCHECK_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_HEALTHCHECK_TIMEOUT_SECONDS", "3"))
+OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60"))
+OLLAMA_HEALTHCHECK_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_HEALTHCHECK_TIMEOUT_SECONDS", "2"))
+

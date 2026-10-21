@@ -11,7 +11,7 @@ import {
   Edit3,
   CheckCircle2,
   FileText,
-  DollarSign,
+  IndianRupee,
   Calendar,
   Hash,
   Receipt,
@@ -23,6 +23,8 @@ import {
   CreditCard,
   Tag
 } from 'lucide-react'
+import { API_URL } from '@/lib/api'
+
 
 function formatCurrency(amount: number | undefined | null, currency: string = 'INR'): string {
   const val = Number(amount ?? 0)
@@ -55,7 +57,7 @@ export default function BillDetailScreen() {
         const id = params.id
         if (!id) return
 
-        let url = `http://localhost:8000/api/bills/${id}`
+        let url = `${API_URL}/api/bills/${id}`
         
         // Handle fallback for 'current'
         if (id === 'current') {
@@ -63,7 +65,7 @@ export default function BillDetailScreen() {
           if (rawData) {
             const parsed = JSON.parse(rawData)
             if (parsed.id) {
-              url = `http://localhost:8000/api/bills/${parsed.id}`
+              url = `${API_URL}/api/bills/${parsed.id}`
             } else {
               setLoading(false)
               return
@@ -73,6 +75,7 @@ export default function BillDetailScreen() {
             return
           }
         }
+
 
         const res = await fetch(url, {
           headers: {
@@ -121,16 +124,16 @@ export default function BillDetailScreen() {
           { key: 'invoice_number', label: 'Invoice Number', value: data.invoiceNumber || '', confidence: data.confidence || 95, icon: Hash },
           { key: 'invoice_date', label: 'Invoice Date', value: data.date || '', confidence: data.confidence || 95, icon: Calendar },
           { key: 'gst_number', label: 'GST Number', value: data.gstNumber || '', confidence: data.confidence || 95, icon: Receipt },
-          { key: 'subtotal', label: 'Subtotal', value: formatCurrency(data.subtotal, currency), confidence: data.confidence || 95, icon: DollarSign },
+          { key: 'subtotal', label: 'Subtotal', value: formatCurrency(data.subtotal, currency), confidence: data.confidence || 95, icon: IndianRupee },
           { key: 'cgst_amount', label: 'CGST', value: formatCurrency(data.cgst, currency), confidence: data.confidence || 95, icon: Receipt },
           { key: 'sgst_amount', label: 'SGST', value: formatCurrency(data.sgst, currency), confidence: data.confidence || 95, icon: Receipt },
           { key: 'igst_amount', label: 'IGST', value: formatCurrency(data.igst, currency), confidence: data.confidence || 95, icon: Receipt },
           { key: 'tax_amount', label: 'Tax Amount', value: formatCurrency(data.gst, currency), confidence: data.confidence || 95, icon: Receipt },
-          { key: 'invoice_total', label: 'Total Amount', value: formatCurrency(data.amount, currency), confidence: data.confidence || 95, icon: DollarSign },
+          { key: 'invoice_total', label: 'Total Amount', value: formatCurrency(data.amount, currency), confidence: data.confidence || 95, icon: IndianRupee },
           { key: 'due_date', label: 'Due Date (dd/mm/yyyy)', value: data.dueDate || '', confidence: data.confidence || 95, icon: Calendar },
           { key: 'payment_terms', label: 'Payment Terms', value: data.paymentTerms || '', confidence: data.confidence || 95, icon: FileText },
-          { key: 'balance_due', label: 'Balance Due', value: formatCurrency(data.balanceDue, currency), confidence: data.confidence || 95, icon: DollarSign },
-          { key: 'amount_paid', label: 'Amount Paid', value: formatCurrency(data.amountPaid, currency), confidence: data.confidence || 95, icon: DollarSign },
+          { key: 'balance_due', label: 'Balance Due', value: formatCurrency(data.balanceDue, currency), confidence: data.confidence || 95, icon: IndianRupee },
+          { key: 'amount_paid', label: 'Amount Paid', value: formatCurrency(data.amountPaid, currency), confidence: data.confidence || 95, icon: IndianRupee },
           { key: 'payment_status', label: 'Payment Status', value: data.paymentStatus || 'UNKNOWN', confidence: data.confidence || 95, icon: CheckCircle2 },
           { key: 'status_reason', label: 'Status Reason', value: data.statusReason || '', confidence: data.confidence || 95, icon: FileText },
           { key: 'payment_method', label: 'Payment Method', value: data.paymentMethod || 'Not detected', confidence: data.confidence || 95, icon: CreditCard },
@@ -211,7 +214,7 @@ export default function BillDetailScreen() {
     })
 
     try {
-      const res = await fetch(`http://localhost:8000/api/bills/${bill.id}`, {
+      const res = await fetch(`${API_URL}/api/bills/${bill.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -259,12 +262,13 @@ export default function BillDetailScreen() {
     if (!token || !bill) return
 
     try {
-      const res = await fetch(`http://localhost:8000/api/bills/${bill.id}`, {
+      const res = await fetch(`${API_URL}/api/bills/${bill.id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
         }
       })
+
       if (res.ok) {
         // Clear local storage variables
         localStorage.removeItem('processed_bill_data')

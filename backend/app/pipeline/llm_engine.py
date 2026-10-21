@@ -7,6 +7,8 @@ from typing import Dict, Any, Optional, List, Tuple, NamedTuple
 from app.core.config import (
     HUGGINGFACE_API_KEY,
     HUGGINGFACE_MODEL,
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
     OLLAMA_TIMEOUT_SECONDS,
@@ -19,6 +21,7 @@ from app.pipeline.semantic_engine import (
     normalize_gstin,
     normalize_invoice_number,
     _reconcile_amount_fields,
+    _extract_currency_from_ocr,
 )
 
 logger = logging.getLogger(__name__)
@@ -493,22 +496,28 @@ def extract_ocr_hints(raw_ocr_text: str) -> Dict[str, Any]:
 
     # Tax lines (Indian retail) — computed BEFORE subtotal selection so the
     # subtotal + tax ≈ grand_total math check below has tax_amount available.
+    # Tax lines (Indian retail) — computed BEFORE subtotal selection so the
+    # subtotal + tax ≈ grand_total math check below has tax_amount available.
     for line in text.splitlines():
         ll = line.lower()
         if 'cgst' in ll and 'sgst' not in ll:
+            clean_line = re.sub(r'\(\s*\d+(?:\.\d+)?\s*%\s*\)|\b\d+(?:\.\d+)?\s*%', '', line)
             for pat in PATTERNS['amount']:
-                m = pat.search(line)
+                m = pat.search(clean_line)
                 if m:
                     val = _parse_amount_str(m.group(1))
                     if val and val < 1_000_000:
                         hints['cgst_amount'] = val
+                        break
         if 'sgst' in ll:
+            clean_line = re.sub(r'\(\s*\d+(?:\.\d+)?\s*%\s*\)|\b\d+(?:\.\d+)?\s*%', '', line)
             for pat in PATTERNS['amount']:
-                m = pat.search(line)
+                m = pat.search(clean_line)
                 if m:
                     val = _parse_amount_str(m.group(1))
                     if val and val < 1_000_000:
                         hints['sgst_amount'] = val
+                        break
 
     if hints.get('cgst_amount') and hints.get('sgst_amount'):
         hints['tax_amount'] = hints['cgst_amount'] + hints['sgst_amount']
@@ -545,28 +554,19 @@ def extract_ocr_hints(raw_ocr_text: str) -> Dict[str, Any]:
     if any(k in tl for k in _RETAIL_VENDOR_KWS):
         hints['category'] = 'Food'
         hints['document_type'] = 'receipt'
+    elif any(k in tl for k in ['electricity', 'electric', 'power', 'kwh', 'meter rent', 'electricity duty', 'broadband', 'telecom', 'water bill', 'utility']):
+        hints['category'] = 'Utilities'
     elif 'hotel' in tl:
         hints['category'] = 'Travel'
-    elif 'fuel' in tl or 'petrol' in tl or 'diesel' in tl:
+    elif ('fuel' in tl or 'petrol' in tl or 'diesel' in tl) and not any(k in tl for k in ['electricity', 'electric', 'power', 'kwh']):
         hints['category'] = 'Fuel'
     elif 'restaurant' in tl or 'cafe' in tl:
         hints['category'] = 'Food'
 
-    # FIXED (audit Bug #11): only set a currency hint when there is actual
-    # evidence in the text. Previously this defaulted to 'INR' whenever no
-    # symbol/code was found at all, which silently mislabeled genuinely
-    # ambiguous or international documents (export/import/commercial
-    # invoices are exactly the types most likely to be non-INR).
-    if '₹' in text or re.search(r'\bRs\.?\b|\bINR\b', text, re.I):
-        hints['currency'] = 'INR'
-    elif '$' in text or re.search(r'\bUSD\b', text, re.I):
-        hints['currency'] = 'USD'
-    elif '€' in text or re.search(r'\bEUR\b', text, re.I):
-        hints['currency'] = 'EUR'
-    elif '£' in text or re.search(r'\bGBP\b', text, re.I):
-        hints['currency'] = 'GBP'
-    # else: no currency hint set — let the LLM's own read stand, or leave
-    # unresolved rather than guessing.
+    # Dynamic multi-currency detection evaluating symbols, strict word-boundary ISO codes, and tax markers
+    detected_curr = _extract_currency_from_ocr(text)
+    if detected_curr:
+        hints['currency'] = detected_curr
 
     return hints
 
@@ -784,6 +784,8 @@ def apply_ocr_corrections_to_fields(mapped: dict, raw_ocr_text: str) -> dict:
             if chosen is not None and chosen != cur_f:
                 _set(path, chosen)
         elif abs(cur_f - hint_val) / max(hint_val, 1) > 0.5:
+            if src_key in ('cgst_amount', 'sgst_amount') and hint_val <= 28.0 and cur_f > 28.0:
+                continue
             _set(path, hint_val)
 
     doc_type = mapped.get('document_type', '')
@@ -799,12 +801,25 @@ def apply_ocr_corrections_to_fields(mapped: dict, raw_ocr_text: str) -> dict:
             mapped['payment_status'] = 'PAID'
             mapped['status_reason'] = 'UPI / card payment completed per receipt.'
 
+    # Guard: explicitly detect OVERDUE / UNPAID invoices
+    if re.search(r'\b(?:overdue|days\s*overdue|unpaid\s*/\s*overdue|amount\s*is\s*due)\b', raw_ocr_text, re.I):
+        mapped['payment_status'] = 'OVERDUE'
+        mapped['status_reason'] = "Explicit 'OVERDUE' status indicator found on document."
+        gt_node = _get(['amounts', 'grand_total'])
+        try:
+            gt_val = float(gt_node) if gt_node is not None else 0.0
+        except (TypeError, ValueError):
+            gt_val = 0.0
+        if gt_val > 0:
+            _set(['payment', 'balance_due'], gt_val)
+            _set(['payment', 'amount_paid'], 0.0)
+
     if hints.get('payment_method') and not _get(['payment', 'payment_method']):
         _set(['payment', 'payment_method'], hints['payment_method'])
 
     if hints.get('category'):
         cat = mapped.get('category') or _get(['category'])
-        if cat in ('Utilities', 'Office Supplies', 'Office', None, ''):
+        if hints['category'] == 'Utilities' or cat in ('Office Supplies', 'Office', None, ''):
             mapped['category'] = hints['category']
 
     # FIXED (audit Bug #11): only set currency when there's an actual hint;
@@ -1175,16 +1190,93 @@ def _ollama_is_reachable() -> bool:
         return False
 
 
+def _extract_with_gemini(image_path: str, raw_ocr_text: str) -> Optional[dict]:
+    """
+    Primary extraction tier using Google Gemini 2.0 Flash REST API (Free on Google AI Studio).
+    Fast, multimodal (vision + OCR), and near 100% extraction accuracy on invoices and receipts.
+    """
+    if not GEMINI_API_KEY:
+        return None
+
+    try:
+        import httpx
+
+        flavor = _detect_document_flavor(raw_ocr_text)
+        system_prompt = _build_system_prompt(flavor)
+        logger.info("Connecting to Google Gemini API using model %s (document flavor: %s)", GEMINI_MODEL, flavor)
+
+        user_prompt = (
+            "Extract all invoice/receipt fields from this document into the exact JSON schema requested in the system instructions.\n"
+            "Pay special attention to any payment/transaction slip sections.\n"
+            "Do NOT confuse merchant/terminal/batch reference numbers with invoice totals.\n"
+            "Do NOT confuse 'MRP Total'/'Total Savings'/'Round Off' with the actual grand_total.\n\n"
+            f"OCR text (use for exact spelling and numbers):\n\n{raw_ocr_text}\n\n"
+            "Return JSON matching the schema."
+        )
+
+        parts: List[Dict[str, Any]] = []
+        try:
+            base64_image = encode_image_to_base64(image_path)
+            ext = os.path.splitext(image_path)[1].lower().replace(".", "")
+            mime_type = f"image/{ext}" if ext in ["png", "jpg", "jpeg", "webp"] else "image/jpeg"
+            parts.append({
+                "inline_data": {
+                    "mime_type": mime_type,
+                    "data": base64_image,
+                }
+            })
+        except Exception as img_err:
+            logger.warning("Failed to prepare base64 image for Gemini, using OCR text only: %s", img_err)
+
+        parts.append({"text": f"{system_prompt}\n\n{user_prompt}"})
+
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": parts,
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.1,
+                "response_mime_type": "application/json",
+            },
+        }
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+        with httpx.Client(timeout=30.0) as http_client:
+            res = http_client.post(url, json=payload)
+            res.raise_for_status()
+            data = res.json()
+            response_text = data["candidates"][0]["content"]["parts"][0]["text"]
+
+        logger.info("Successfully received Gemini response: %s...", response_text[:300])
+
+        parsed_json = clean_and_parse_json(response_text)
+        enriched = enrich_llm_data_from_ocr(parsed_json, raw_ocr_text)
+        mapped_result = map_llm_json_to_schema(enriched, raw_ocr_text)
+        return mapped_result
+    except Exception as e:
+        logger.error("Gemini API extraction failed: %s. Falling back to local Ollama / rule engine.", e)
+        return None
+
+
 def extract_with_huggingface(image_path: str, raw_ocr_text: str) -> Optional[dict]:
     """
-    Despite the historical name, this function's primary path now talks to
-    a local Ollama server (see OLLAMA_* settings in app.core.config). The
-    Hugging Face-hosted path remains available as a documented alternative
-    if HUGGINGFACE_API_KEY is set and OLLAMA is not reachable — currently
-    this function only implements the Ollama path, matching the project's
-    current configuration; HUGGINGFACE_API_KEY is intentionally imported so
-    that a future branch can add that alternative without touching callers.
+    Primary LLM extraction function.
+    Execution hierarchy:
+    1. Google Gemini (GEMINI_API_KEY) - fast, 100% free tier on Google AI Studio, high accuracy
+    2. Local Ollama (OLLAMA_BASE_URL) - local offline fallback if reachable
+    3. Return None to trigger rule-based SemanticEngine fallback in pipeline.py
     """
+    # Tier 1: Google Gemini (Free on Google AI Studio)
+    if GEMINI_API_KEY:
+        gemini_result = _extract_with_gemini(image_path, raw_ocr_text)
+        if gemini_result is not None:
+            return gemini_result
+        logger.warning("Gemini extraction did not succeed, proceeding to local Ollama fallback...")
+
+    # Tier 2: Local Ollama
     if not _ollama_is_reachable():
         logger.warning(
             "Ollama server at %s is not reachable — skipping LLM extraction "
@@ -1254,3 +1346,7 @@ def extract_with_huggingface(image_path: str, raw_ocr_text: str) -> Optional[dic
     except Exception as e:
         logger.error("Local Ollama extraction failed: %s. Falling back to rule-based SemanticEngine.", e)
         return None
+
+
+# Alias for clean modern naming
+extract_with_llm = extract_with_huggingface

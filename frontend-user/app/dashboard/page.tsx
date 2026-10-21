@@ -11,7 +11,7 @@ import {
   Search,
   Filter,
   Calendar,
-  DollarSign,
+  IndianRupee,
   CheckCircle2,
   Clock,
   ChevronRight,
@@ -23,6 +23,8 @@ import {
 } from 'lucide-react'
 import { PieChart as RechartsPie, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts'
 import { useRouter } from 'next/navigation'
+import { API_URL } from '@/lib/api'
+
 
 export default function DashboardScreen() {
   const router = useRouter()
@@ -77,7 +79,7 @@ export default function DashboardScreen() {
       try {
         if (!isPoll) {
           // 1. Fetch current user info
-          const userRes = await fetch('http://localhost:8000/api/auth/me', {
+          const userRes = await fetch(`${API_URL}/api/auth/me`, {
             headers: {
               'Authorization': `Bearer ${token}`
             }
@@ -90,11 +92,12 @@ export default function DashboardScreen() {
         }
 
         // 2. Fetch user bills list
-        const billsRes = await fetch('http://localhost:8000/api/bills', {
+        const billsRes = await fetch(`${API_URL}/api/bills`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
         })
+
         if (!billsRes.ok) {
           throw new Error('Failed to load bills')
         }
@@ -200,7 +203,7 @@ export default function DashboardScreen() {
           const maxCat = Object.keys(categoriesMap).reduce((a, b) => categoriesMap[a] > categoriesMap[b] ? a : b, 'Office')
           setStats([
             { label: 'Total Invoices', value: totalBillsCount, change: '+100%', icon: FileText, color: 'from-blue-500 to-indigo-500' },
-            { label: 'Total Amount', value: `₹${totalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, change: '+100%', icon: DollarSign, color: 'from-purple-500 to-pink-500' },
+            { label: 'Total Amount', value: `₹${totalAmount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, change: '+100%', icon: IndianRupee, color: 'from-purple-500 to-pink-500' },
             { label: 'Total Paid', value: `₹${totalPaid.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, change: '+100%', icon: CheckCircle2, color: 'from-emerald-500 to-teal-500' },
             { label: 'Amount Due', value: `₹${amountDue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`, change: '+100%', icon: Clock, color: 'from-amber-500 to-orange-500' }
           ])
@@ -208,7 +211,7 @@ export default function DashboardScreen() {
         } else {
           setStats([
             { label: 'Total Invoices', value: '0', change: '0%', icon: FileText, color: 'from-blue-500 to-indigo-500' },
-            { label: 'Total Amount', value: '₹0.00', change: '0%', icon: DollarSign, color: 'from-purple-500 to-pink-500' },
+            { label: 'Total Amount', value: '₹0.00', change: '0%', icon: IndianRupee, color: 'from-purple-500 to-pink-500' },
             { label: 'Total Paid', value: '₹0.00', change: '0%', icon: CheckCircle2, color: 'from-emerald-500 to-teal-500' },
             { label: 'Amount Due', value: '₹0.00', change: '0%', icon: Clock, color: 'from-amber-500 to-orange-500' }
           ])

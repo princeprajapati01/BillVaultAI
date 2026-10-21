@@ -29,8 +29,9 @@ class CategoryNLPClassifier:
             "Medical": ["medical", "pharmacy", "hospital", "doctor", "rx", "medicine", "healthcare", "chemist", "pharma", "drug", "clinic", "prescription"],
             "Software": ["software", "saas", "subscription", "cloud", "aws", "gcp", "azure", "hosting", "domain", "github", "atlassian", "microsoft", "license", "api", "digitalocean"],
             "Marketing": ["marketing", "ads", "facebook ads", "google ads", "advertisement", "promotion", "campaign", "adwords"],
-            "Utilities": ["utility", "electricity", "water", "power", "telecom", "broadband", "phone", "mobile", "internet", "sewer", "trash"],
-            "Electronics": ["electronics", "laptop", "mobile", "charger", "keyboard", "mouse", "monitor", "hardware", "device", "printer", "accessories"],
+            "Utilities": ["utility", "electricity", "water", "power", "telecom", "broadband", "internet", "sewer", "trash"],
+            "Hardware & Tools": ["tools", "tool", "hardware", "machinery", "hammer", "saw", "drill", "press", "component", "industrial", "steel", "manufacturing", "motor", "parts", "fasteners"],
+            "Electronics": ["electronics", "laptop", "charger", "keyboard", "mouse", "monitor", "device", "printer", "accessories"],
             "Subscription": ["subscription", "monthly", "yearly", "netflix", "spotify", "zoom", "renewal", "membership"],
             "Entertainment": ["entertainment", "movie", "ticket", "event", "show", "cinema", "theatre", "amusement"],
             "Office Supplies": ["stationery", "paper", "pen", "office", "supplies", "printing", "stapler", "envelope", "notebook", "shoes", "shoe", "apparel", "wear", "shirt", "clothing"]
@@ -230,7 +231,7 @@ def _is_subtotal_label(text_lower: str) -> bool:
 def _is_grand_total_label(text_lower: str) -> bool:
     if _is_subtotal_label(text_lower):
         return False
-    if re.search(r'\b(?:grand\s+total|total\s+amount|total\s+due|net\s+payable)\b', text_lower):
+    if re.search(r'\b(?:grand\s+total|total\s+amount|total\s+due|net\s+payable|total\s+amount\s+after\s+tax|amount\s+after\s+tax|net\s+amount\s+after\s+tax)\b', text_lower):
         return True
     return bool(re.fullmatch(r'\s*total\s*:?\s*', text_lower) or re.search(r'(?<!\w)total(?!\w)', text_lower) and 'tax' not in text_lower and 'discount' not in text_lower)
 
@@ -242,7 +243,7 @@ def _looks_like_address_line(text: str) -> bool:
     text_lower = text.lower()
     if _ADDRESS_WORD_PATTERN.search(text_lower):
         return True
-    if any(kw in text_lower for kw in ['opposite', 'near', 'tax invoice', 'phone', 'email', 'bill to', 'ship to', 'u.s.a', 'united states', 'india']):
+    if any(kw in text_lower for kw in ['opposite', 'near', 'tax invoice', 'phone', 'email', 'bill to', 'ship to', 'u.s.a', 'united states', 'india', 'web', 'website', 'www.', 'http', 'tel', 'fax']):
         return True
     if re.match(r'^\d+[,\s]', text):
         return True
@@ -262,6 +263,8 @@ def _score_vendor_candidate(text: str) -> float:
     if _looks_like_address_line(text):
         return -100.0
     text_lower = text.lower()
+    if re.search(r'\b(?:web|website|www\.|https?:|email|tel|phone|fax|mobile)\b', text_lower):
+        return -100.0
     if any(kw in text_lower for kw in ['invoice', 'tax invoice', 'receipt', 'bill to', 'ship to']):
         return -100.0
     score = 0.0
@@ -271,23 +274,65 @@ def _score_vendor_candidate(text: str) -> float:
     if words and all(w[0].isupper() for w in words if w and w[0].isalpha()):
         score += 20.0
     if any(k in text_lower for k in KEYWORDS['company']):
-        score += 30.0
+        score += 35.0
     if re.search(r'[A-Za-z]+\s+[A-Za-z]+', text):
         score += 10.0
     return score
 
 
-def _extract_currency_from_ocr(ocr_results: List[OCRResult]) -> str:
-    full_text = " ".join(r.text for r in ocr_results)
-    if '$' in full_text or re.search(r'\bUSD\b', full_text, re.IGNORECASE):
-        return 'USD'
-    if '₹' in full_text or re.search(r'\b(?:INR|Rs\.?)\b', full_text, re.IGNORECASE):
-        return 'INR'
-    if re.search(r'\bEUR\b|€', full_text, re.IGNORECASE):
-        return 'EUR'
-    if re.search(r'\bGBP\b|£', full_text, re.IGNORECASE):
-        return 'GBP'
-    return 'INR'
+def _extract_currency_from_ocr(ocr_data: Any) -> str:
+    if isinstance(ocr_data, str):
+        full_text = ocr_data
+    elif isinstance(ocr_data, list):
+        full_text = " ".join(getattr(r, "text", str(r)) for r in ocr_data)
+    else:
+        full_text = str(ocr_data or "")
+    scores = {
+        "INR": 0.0,
+        "USD": 0.0,
+        "EUR": 0.0,
+        "GBP": 0.0,
+        "CAD": 0.0,
+        "AUD": 0.0,
+        "JPY": 0.0,
+    }
+
+    # 1. Explicit visual currency symbols
+    if "₹" in full_text or re.search(r'\b(?:Rs\.?|INR)\b', full_text, re.IGNORECASE):
+        scores["INR"] += 12.0
+    if "€" in full_text:
+        scores["EUR"] += 12.0
+    if "£" in full_text:
+        scores["GBP"] += 12.0
+    if "¥" in full_text:
+        scores["JPY"] += 12.0
+    if "$" in full_text:
+        if re.search(r'\bCAD\b|C\$', full_text, re.IGNORECASE):
+            scores["CAD"] += 12.0
+        elif re.search(r'\bAUD\b|A\$', full_text, re.IGNORECASE):
+            scores["AUD"] += 12.0
+        else:
+            scores["USD"] += 8.0
+
+    # 2. Standalone ISO currency codes with strict word boundaries
+    for code, weight in [("INR", 8.0), ("USD", 8.0), ("EUR", 8.0), ("GBP", 8.0), ("CAD", 8.0), ("AUD", 8.0), ("JPY", 8.0)]:
+        if re.search(rf'\b{code}\b', full_text):
+            scores[code] += weight
+
+    # 3. Country-specific tax, legal & banking regulatory identifiers
+    if re.search(r'\b(?:GSTIN|CGST|SGST|IGST|IFSC|UPI|NEFT|RTGS|PAN\s*NO)\b', full_text, re.IGNORECASE):
+        scores["INR"] += 15.0
+    if re.search(r'\b(?:HMRC|Sort\s*Code|VAT\s*Reg|GB\d{9})\b', full_text, re.IGNORECASE):
+        scores["GBP"] += 10.0
+    if re.search(r'\b(?:USt-IdNr|TVA|MwSt|CIF|NIF|IBAN)\b', full_text, re.IGNORECASE):
+        scores["EUR"] += 10.0
+    if re.search(r'\b(?:EIN|Sales\s*Tax\s*ID|State\s*Tax)\b', full_text, re.IGNORECASE):
+        scores["USD"] += 10.0
+    if re.search(r'\bABN\b', full_text):
+        scores["AUD"] += 10.0
+
+    best = max(scores, key=scores.get)
+    return best if scores[best] > 0.0 else "INR"
 
 
 def _reconcile_amount_fields(
@@ -473,9 +518,19 @@ def resolve_payment_status(
     """
     text = full_text.lower()
 
-    # Cancellation is a strong, low-ambiguity signal — keep checking first.
-    if any(kw in text for kw in ["cancelled", "void", "voided"]):
-        return "CANCELLED", "Invoice contains cancellation or void status keywords."
+    # --- 0. Explicit Overdue / Unpaid indicators (check before cancellation keywords to prevent 'avoid' false positives) ---
+    if re.search(r'\b(?:overdue|days\s*overdue|unpaid\s*/\s*overdue|amount\s*is\s*due)\b', text):
+        return "OVERDUE", "Explicit 'OVERDUE' status indicator found on document."
+    if re.search(r'\b(?:unpaid|not\s*paid)\b', text):
+        return "UNPAID", "Explicit 'UNPAID' indicator found on document."
+
+    # Explicit Cancellation stamps or status labels only (never loose words inside disclaimer sentences)
+    if re.search(r'\b(?:(?:payment\s+)?status\s*:\s*(?:cancelled|canceled|void|voided)|invoice\s+(?:is\s+)?(?:cancelled|canceled|void|voided)|(?:cancelled|canceled|void)\s+invoice)\b', text):
+        return "CANCELLED", "Explicit cancellation or void status stamp found on document."
+    for line in full_text.splitlines():
+        clean_line = line.strip().lower()
+        if clean_line in ("cancelled", "canceled", "void", "voided", "[cancelled]", "[void]"):
+            return "CANCELLED", "Explicit cancellation stamp found."
 
     # --- 1. Numeric evidence first: most reliable indicator ---
     if balance_due is not None:
@@ -528,19 +583,19 @@ class SemanticEngine:
     """
 
     KEYS_CONFIG = [
-        ('invoice_number', re.compile(r'(?<![a-zA-Z])(invoice\s*#?|inv\s*no\.?|bill\s*no\.?)(?![a-zA-Z])', re.IGNORECASE), 'invoice_number'),
-        ('invoice_date', re.compile(r'(?<![a-zA-Z])(invoice\s*date|bill\s*date|issue\s*date|date|dated)(?![a-zA-Z])', re.IGNORECASE), 'date'),
+        ('invoice_number', re.compile(r'(?<![a-zA-Z])(proforma(?:\s*invoice)?\s*(?:no\.?|#|number)|challan\s*no\.?|order\s*no\.?|p\.?o\.?\s*no\.?|p\.?i\.?\s*no\.?|invoice\s*#?|inv\s*no\.?|bill\s*no\.?)(?![a-zA-Z])', re.IGNORECASE), 'invoice_number'),
+        ('invoice_date', re.compile(r'(?<![a-zA-Z])(proforma\s*date|challan\s*date|invoice\s*date|bill\s*date|issue\s*date|date|dated)(?![a-zA-Z])', re.IGNORECASE), 'date'),
         ('due_date', re.compile(r'(?<![a-zA-Z])(due\s*date|pay\s*by|expiry)(?![a-zA-Z])', re.IGNORECASE), 'date'),
-        ('payment_terms', re.compile(r'(?<![a-zA-Z])(payment\s*terms|terms)(?![a-zA-Z])', re.IGNORECASE), 'text'),
-        ('invoice_total', re.compile(r'(?<![a-zA-Z])(grand\s*total|total|total\s*due|net\s*payable|total\s*amount)(?![a-zA-Z])', re.IGNORECASE), 'amount'),
+        ('payment_terms', re.compile(r'(?<![a-zA-Z])(payment\s*terms)(?![a-zA-Z])', re.IGNORECASE), 'text'),
+        ('invoice_total', re.compile(r'(?<![a-zA-Z])(total\s*amount\s*after\s*tax|net\s*amount\s*after\s*tax|amount\s*after\s*tax|grand\s*total|total\s*due|net\s*payable|total\s*amount|total)(?![a-zA-Z])', re.IGNORECASE), 'amount'),
         ('balance_due', re.compile(r'(?<![a-zA-Z])(balance\s*due|amount\s*due|outstanding\s*amount|bal\s*due)(?![a-zA-Z])', re.IGNORECASE), 'amount'),
         ('amount_paid', re.compile(r'(?<![a-zA-Z])(amount\s*paid|paid\s*amount|paid|amt\s*paid)(?![a-zA-Z])', re.IGNORECASE), 'amount'),
         ('gst_number', re.compile(r'(?<![a-zA-Z])(gstin|gst\s*no\.?|gst\s*number)(?![a-zA-Z])', re.IGNORECASE), 'gst_number'),
-        ('subtotal', re.compile(r'(?<![a-zA-Z])(subtotal|sub\s*total|taxable\s*amount|taxable\s*value|net\s*amount)(?![a-zA-Z])', re.IGNORECASE), 'amount'),
+        ('subtotal', re.compile(r'(?<![a-zA-Z])(taxable\s*amount|taxable\s*value|subtotal|sub\s*total|net\s*amount)(?![a-zA-Z])', re.IGNORECASE), 'amount'),
         ('cgst_amount', re.compile(r'(?<![a-zA-Z])(cgst)(?![a-zA-Z])', re.IGNORECASE), 'amount'),
         ('sgst_amount', re.compile(r'(?<![a-zA-Z])(sgst)(?![a-zA-Z])', re.IGNORECASE), 'amount'),
-        ('igst_amount', re.compile(r'(?<![a-zA-Z])(igst)(?![a-zA-Z])', re.IGNORECASE), 'amount'),
-        ('tax_amount', re.compile(r'(?<![a-zA-Z])(tax|gst|vat)(?![a-zA-Z])', re.IGNORECASE), 'amount')
+        ('igst_amount', re.compile(r'(?<![a-zA-Z])(add\s*:\s*igst|total\s*igst|igst)(?![a-zA-Z])', re.IGNORECASE), 'amount'),
+        ('tax_amount', re.compile(r'(?<![a-zA-Z])(total\s*tax|tax\s*amount|tax\s*total|tax|gst|vat)(?![a-zA-Z])', re.IGNORECASE), 'amount')
     ]
 
     def __init__(self, image_shape: tuple):
@@ -637,6 +692,15 @@ class SemanticEngine:
                     # Skip tax/amount matching for registration/ID fields
                     if 'amount' in field or 'tax' in field:
                         if any(term in text_lower for term in ['registration', 'reg', 'no', 'number', 'id', 'code']):
+                            continue
+                    if field == 'tax_amount':
+                        if any(term in text_lower for term in ['after tax', 'after-tax', 'subtotal', 'taxable']):
+                            continue
+                    if field == 'invoice_number':
+                        if any(term in text_lower for term in ['signature', 'required', 'validity', 'needed', 'computer generated', 'computer-generated']):
+                            continue
+                    if field == 'payment_terms':
+                        if any(term in text_lower for term in ['and conditions', '& conditions']):
                             continue
                     if field == 'invoice_total':
                         if _is_subtotal_label(text_lower):
@@ -796,17 +860,34 @@ class SemanticEngine:
                 raw_value=str(vendor_name),
                 enable_correction=False,
             )
+        # STEP 4: CUSTOMER EXTRACTION
+        customer_info = self._extract_customer_info(ocr_results)
+
         vendor_gstin = classified.get('gst_number', {}).get('value')
-        # Simple vendor address extraction (look for lines containing city, road, pincode)
+        # Check if top region contains an explicit vendor GSTIN (higher priority than customer GSTIN)
+        top_gst = None
+        for r in ocr_results:
+            if (r.box[1] + r.box[3]) / 2.0 / self.img_h < 0.35:
+                m = re.search(r'\b(?:gstin|gst\s*no\.?)\s*:?\s*([0-9A-Z]{14,16})\b', r.text, re.IGNORECASE)
+                if m:
+                    top_gst = normalize_gstin(m.group(1))
+                    break
+        if top_gst:
+            vendor_gstin = top_gst
+        elif vendor_gstin and customer_info.get("customer_gstin") and vendor_gstin == customer_info.get("customer_gstin"):
+            # Vendor GSTIN was falsely assigned to customer's GSTIN; look for another candidate
+            for r in ocr_results:
+                m = re.search(r'\b(?:gstin|gst\s*no\.?)\s*:?\s*([0-9A-Z]{14,16})\b', r.text, re.IGNORECASE)
+                if m and normalize_gstin(m.group(1)) != customer_info.get("customer_gstin"):
+                    vendor_gstin = normalize_gstin(m.group(1))
+                    break
+
         vendor_address = None
         for res in ocr_results:
             if res.confidence >= 0.4 and any(kw in res.text.lower() for kw in ['street', 'road', 'nagar', 'floor', 'building', 'opposite']):
                 if not any(kw in res.text.lower() for kw in ['bill to', 'ship to', 'buyer', 'customer']):
                     vendor_address = res.text.strip()
                     break
-
-        # STEP 4: CUSTOMER EXTRACTION
-        customer_info = self._extract_customer_info(ocr_results)
 
         # STEP 5: INVOICE DETAILS
         inv_no = classified.get('invoice_number', {}).get('value')
@@ -879,6 +960,22 @@ class SemanticEngine:
 
         # STEP 11: BUSINESS VALIDATION & REPAIRS
         warnings = []
+        # Tax rate vs amount mathematical resolution
+        # (Fixes cases where CGST (9%) / SGST (9%) is captured as 9.00 instead of 198.00)
+        if subtotal is not None and grand_total is not None and grand_total > subtotal:
+            tax_diff = round(grand_total - subtotal, 2)
+            if cgst is not None and sgst is not None and cgst <= 28.0 and sgst <= 28.0:
+                expected_each = round(tax_diff / 2.0, 2)
+                # Check if cgst is a percentage rate that matches the actual difference
+                calc_each = round(subtotal * (cgst / 100.0), 2)
+                if abs(calc_each - expected_each) <= 1.0 or abs(tax_diff - (cgst + sgst)) > 5.0:
+                    cgst = expected_each
+                    sgst = expected_each
+                    tax_amount = tax_diff
+            elif tax_amount is not None and tax_amount > 28.0 and (cgst is None or cgst <= 28.0) and (sgst is None or sgst <= 28.0):
+                cgst = round(tax_amount / 2.0, 2)
+                sgst = round(tax_amount / 2.0, 2)
+
         # Support missing tax_amount if IGST or CGST/SGST exist
         if tax_amount is None:
             if igst is not None:
@@ -896,7 +993,7 @@ class SemanticEngine:
                 tax_amount = calc_tax
         elif tax_amount is not None and cgst is None and sgst is None and (igst is None or igst == 0.0):
             # Repair cgst/sgst as halves of tax_amount ONLY if IGST is not present
-            cgst = sgst = tax_amount / 2.0
+            cgst = sgst = round(tax_amount / 2.0, 2)
 
         # Subtotal + Tax = Grand Total check
         if subtotal is not None and tax_amount is not None and grand_total is not None:
@@ -1095,6 +1192,14 @@ class SemanticEngine:
         ]
         top_results.sort(key=lambda r: (r.box[1], r.box[0]))
 
+        # Check explicit authorized footer signatory line e.g. "For BrightPower Electricity Services"
+        for r in ocr_results:
+            m = re.search(r'\bfor\s+([A-Za-z0-9\s&.,\-]+?)(?:\s*(?:thank\s*you|\n|$))', r.text, re.IGNORECASE)
+            if m:
+                cand = m.group(1).strip()
+                if len(cand) >= 4 and not _looks_like_address_line(cand) and not any(kw in cand.lower() for kw in ['recipient', 'customer', 'business', 'invoice']):
+                    return cand, 0.95, f"Authorized signature footer match '{cand}'"
+
         for r in ocr_results:
             text_lower = r.text.lower()
             if any(term in text_lower for term in ["sold by", "supplier", "vendor", "merchant"]):
@@ -1104,12 +1209,27 @@ class SemanticEngine:
 
         best_name = None
         best_score = -1.0
+
+        # Test single lines in top header
         for r in top_results:
             text = r.text.strip()
             score = _score_vendor_candidate(text)
             if score > best_score:
                 best_score = score
                 best_name = text
+
+        # Test consecutive paired lines in top header (handles multi-line brand headers like "BrightPower \n Electricity Services")
+        for i in range(len(top_results) - 1):
+            r1 = top_results[i]
+            r2 = top_results[i + 1]
+            # Check vertical proximity
+            y_gap = r2.box[1] - r1.box[3]
+            if 0 <= y_gap <= 60 and not _looks_like_address_line(r1.text) and not _looks_like_address_line(r2.text):
+                combined = f"{r1.text.strip()} {r2.text.strip()}".strip()
+                score = _score_vendor_candidate(combined) + 15.0  # Bonus for complete multi-line business title
+                if score > best_score:
+                    best_score = score
+                    best_name = combined
 
         if best_name and best_score > 0:
             return best_name, 0.85, "Best-scored top-region business name"
@@ -1495,7 +1615,9 @@ class SemanticEngine:
         return items
 
     def _classify_category(self, ocr_results: List[OCRResult]) -> str:
-        text_full = " ".join(r.text for r in ocr_results)
+        text_full = " ".join(r.text for r in ocr_results).lower()
+        if any(term in text_full for term in ['electricity', 'electric', 'power', 'kwh', 'meter rent', 'electricity duty', 'broadband', 'telecom', 'water bill']):
+            return "Utilities"
         return self.category_classifier.classify(text_full)
 
     def _find_matching_value_near(self, target_value: float, key_word: str, ocr_results: List[OCRResult]) -> Optional[float]:
@@ -1853,14 +1975,18 @@ class SemanticEngine:
                         break
                 if not val:
                     cleaned = re.sub(r'[^a-zA-Z0-9\-]', '', text)
-                    if len(cleaned) >= 4 and any(c.isdigit() for c in cleaned):
-                        # Verify fallback is not a date
-                        if not any(d_pat.search(cleaned) for d_pat in PATTERNS['date']) and not cleaned.lower().startswith('date'):
+                    if len(cleaned) >= 2 and any(c.isdigit() for c in cleaned):
+                        # Verify fallback is not a date and not a disclaimer word
+                        clean_lower = text.lower()
+                        if not any(d_pat.search(cleaned) for d_pat in PATTERNS['date']) and not clean_lower.startswith('date') and not any(w in clean_lower for w in ['signature', 'required', 'validity', 'computer']):
                             val = cleaned
                             conf = 0.75
             elif expected_type == 'text':
-                val = text
-                conf = 0.80
+                if any(w in text.lower() for w in ['and conditions', '& conditions']):
+                    val = None
+                else:
+                    val = text
+                    conf = 0.80
 
             if val is not None:
                 candidates.append((val, conf, other, dist, vertical_dist))

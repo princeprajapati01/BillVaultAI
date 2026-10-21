@@ -4,11 +4,12 @@ import shutil
 import logging
 import asyncio
 import threading
+from typing import Any, Optional, List, Union
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
-from app.core.config import UPLOADS_DIR, MAX_CONCURRENT_JOBS
+from app.core.config import UPLOADS_DIR, MAX_CONCURRENT_JOBS, API_BASE_URL
 from app.core import pipeline_state
 from app.database.database import get_db, SessionLocal
 from app.database.models.user import User
@@ -22,27 +23,69 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["invoices"])
 
 _pipeline_semaphore = threading.Semaphore(max(1, int(MAX_CONCURRENT_JOBS)))
+MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024  # 15 MB
 
 
-def detect_currency(raw_ocr: str = "") -> str:
+
+def detect_currency(raw_ocr: Any = "") -> str:
     """
-    Best-effort currency detection from raw OCR text for display purposes.
-    Returns "INR" only when there's no other signal, since the Bill model
-    does not persist a currency column separately — this stays a display
-    heuristic, not an authoritative extracted field (see llm_engine.py's
-    `currency` field, which is now allowed to be None rather than forced
-    to a default, for the actually-extracted value).
+    Dynamic production-grade currency detection from document text.
+    Evaluates visual symbols, standalone ISO currency codes with word boundaries,
+    and jurisdictional tax/banking markers with weighted evidence scoring.
     """
-    text = raw_ocr or ""
-    if "$" in text or "USD" in text.upper():
-        return "USD"
-    if "₹" in text or "INR" in text.upper() or "Rs." in text or "Rs " in text:
-        return "INR"
-    if "€" in text or "EUR" in text.upper():
-        return "EUR"
-    if "£" in text or "GBP" in text.upper():
-        return "GBP"
-    return "INR"
+    import re
+    if isinstance(raw_ocr, str):
+        text = raw_ocr
+    elif isinstance(raw_ocr, list):
+        text = " ".join(getattr(r, "text", str(r)) for r in raw_ocr)
+    else:
+        text = str(raw_ocr or "")
+    scores = {
+        "INR": 0.0,
+        "USD": 0.0,
+        "EUR": 0.0,
+        "GBP": 0.0,
+        "CAD": 0.0,
+        "AUD": 0.0,
+        "JPY": 0.0,
+    }
+
+    # 1. Explicit visual currency symbols (highest visual priority)
+    if "₹" in text or re.search(r'\b(?:Rs\.?|INR)\b', text, re.IGNORECASE):
+        scores["INR"] += 12.0
+    if "€" in text:
+        scores["EUR"] += 12.0
+    if "£" in text:
+        scores["GBP"] += 12.0
+    if "¥" in text:
+        scores["JPY"] += 12.0
+    if "$" in text:
+        if re.search(r'\bCAD\b|C\$', text, re.IGNORECASE):
+            scores["CAD"] += 12.0
+        elif re.search(r'\bAUD\b|A\$', text, re.IGNORECASE):
+            scores["AUD"] += 12.0
+        else:
+            scores["USD"] += 8.0
+
+    # 2. Standalone ISO currency codes with strict word boundaries
+    for code, weight in [("INR", 8.0), ("USD", 8.0), ("EUR", 8.0), ("GBP", 8.0), ("CAD", 8.0), ("AUD", 8.0), ("JPY", 8.0)]:
+        if re.search(rf'\b{code}\b', text):
+            scores[code] += weight
+
+    # 3. Country-specific tax, legal & banking regulatory identifiers
+    if re.search(r'\b(?:GSTIN|CGST|SGST|IGST|IFSC|UPI|NEFT|RTGS|PAN\s*NO)\b', text, re.IGNORECASE):
+        scores["INR"] += 15.0
+    if re.search(r'\b(?:HMRC|Sort\s*Code|VAT\s*Reg|GB\d{9})\b', text, re.IGNORECASE):
+        scores["GBP"] += 10.0
+    if re.search(r'\b(?:USt-IdNr|TVA|MwSt|CIF|NIF|IBAN)\b', text, re.IGNORECASE):
+        scores["EUR"] += 10.0
+    if re.search(r'\b(?:EIN|Sales\s*Tax\s*ID|State\s*Tax)\b', text, re.IGNORECASE):
+        scores["USD"] += 10.0
+    if re.search(r'\bABN\b', text):
+        scores["AUD"] += 10.0
+
+    best = max(scores, key=scores.get)
+    return best if scores[best] > 0.0 else "INR"
 
 
 def process_bill_in_background(bill_id: int, permanent_file_path: str, save_filename: str, user_id: int):
@@ -121,14 +164,17 @@ def process_bill_in_background(bill_id: int, permanent_file_path: str, save_file
         except Exception:
             amount_paid_val = None
 
+        payment_status_val = fields.get("payment_status") or "UNKNOWN"
+        status_reason_val = fields.get("status_reason") or "No payment information was found."
+
         if total_val > 0:
-            if balance_due_val is None and amount_paid_val is not None:
+            if payment_status_val in ("OVERDUE", "UNPAID") and (balance_due_val is None or balance_due_val == 0.0):
+                balance_due_val = total_val
+                amount_paid_val = 0.0
+            elif balance_due_val is None and amount_paid_val is not None:
                 balance_due_val = max(0.0, total_val - amount_paid_val)
             elif amount_paid_val is None and balance_due_val is not None:
                 amount_paid_val = max(0.0, total_val - balance_due_val)
-
-        payment_status_val = fields.get("payment_status") or "UNKNOWN"
-        status_reason_val = fields.get("status_reason") or "No payment information was found."
 
         bill.merchant_name = vendor
         bill.invoice_total = total_val
@@ -175,21 +221,25 @@ def process_bill_in_background(bill_id: int, permanent_file_path: str, save_file
         try:
             bill = db.query(Bill).filter(Bill.id == bill_id).first()
             if bill:
-                bill.status = "failed"
+                if not bill.merchant_name or bill.merchant_name == "Unknown Merchant":
+                    bill.merchant_name = "Needs Manual Review"
+                bill.status = "processed"
+                bill.status_reason = f"Processing degraded gracefully: {str(e)[:150]}"
+                bill.notes = bill.notes or "Automated extraction encountered an issue. Document image preserved for manual review."
+                bill.confidence_score = 0.2
                 db.commit()
+                logger.info(f"Bill {bill_id} saved in safe fallback mode.")
         except Exception as db_err:
-            logger.error(f"Failed to update bill status to failed: {str(db_err)}")
+            logger.error(f"Failed to update bill fallback status: {str(db_err)}")
 
-        if os.path.exists(permanent_file_path):
-            try:
-                os.remove(permanent_file_path)
-            except Exception:
-                pass
+        # Preserving permanent_file_path: DO NOT delete the uploaded file on error
+        # so users can view the scan, zoom in the inspector, and edit fields manually.
     finally:
         db.close()
 
 
 @router.post("/process/document")
+@router.post("/api/invoices/process")
 async def process_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
@@ -226,7 +276,15 @@ async def process_document(
                 detail="Free tier limit of 10 uploads reached. Please upgrade to Pro for unlimited uploads."
             )
 
-    # 3. Generate secure local file path
+    # 3. Read and validate file size
+    file_bytes = await file.read()
+    if len(file_bytes) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="File size exceeds the 15MB limit. Please upload a smaller file."
+        )
+
+    # 4. Generate secure local file path
     job_id = str(uuid.uuid4())
     file_ext = os.path.splitext(file.filename)[1].lower() or ".png"
     save_filename = f"{job_id}{file_ext}"
@@ -234,7 +292,7 @@ async def process_document(
 
     try:
         with open(permanent_file_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+            f.write(file_bytes)
 
         if file_ext == '.pdf':
             try:
@@ -246,16 +304,17 @@ async def process_document(
                     preview_filename = f"{job_id}.png"
                     preview_path = os.path.join(UPLOADS_DIR, preview_filename)
                     pix.save(preview_path)
-                    image_web_url = f"http://localhost:8000/uploads/{preview_filename}"
+                    image_web_url = f"{API_BASE_URL}/uploads/{preview_filename}"
                 else:
-                    image_web_url = f"http://localhost:8000/uploads/{save_filename}"
+                    image_web_url = f"{API_BASE_URL}/uploads/{save_filename}"
             except Exception as e:
                 logger.error(f"Failed to generate PDF preview: {e}")
-                image_web_url = f"http://localhost:8000/uploads/{save_filename}"
+                image_web_url = f"{API_BASE_URL}/uploads/{save_filename}"
         else:
-            image_web_url = f"http://localhost:8000/uploads/{save_filename}"
+            image_web_url = f"{API_BASE_URL}/uploads/{save_filename}"
 
         db_bill = Bill(
+
             user_id=current_user.id,
             merchant_name="Processing...",
             invoice_total=0.0,

@@ -23,6 +23,8 @@ import {
   Plus,
   BarChart3
 } from 'lucide-react'
+import { API_URL } from '@/lib/api'
+
 
 const premiumFeatures = [
   'Unlimited bill uploads',
@@ -56,7 +58,7 @@ export default function ProfileScreen() {
 
     try {
       // 1. Fetch User details from backend
-      const meRes = await fetch('http://localhost:8000/api/auth/me', {
+      const meRes = await fetch(`${API_URL}/api/auth/me`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -68,7 +70,7 @@ export default function ProfileScreen() {
       setUserProfile(meData)
 
       // 2. Fetch User Bills to calculate spent stats
-      const billsRes = await fetch('http://localhost:8000/api/bills', {
+      const billsRes = await fetch(`${API_URL}/api/bills`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -101,12 +103,13 @@ export default function ProfileScreen() {
 
     try {
       setLoading(true)
-      const res = await fetch('http://localhost:8000/api/auth/upgrade', {
+      const res = await fetch(`${API_URL}/api/auth/upgrade`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
         }
       })
+
       if (res.ok) {
         const data = await res.json()
         alert('Plan upgraded to Pro successfully!')

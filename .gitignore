@@ -39,14 +39,45 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 
-# Environment variables & secrets
+# Environment variables & secrets (CRITICAL: Never commit credentials)
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-.env*.local
-client_secret_*.json
+.env.*
+*.env
+*.env.*
+*.local
+*.pem
+*.key
+*.cert
+*.pfx
+*.p12
+*.crt
+client_secret*.json
+credentials*.json
+service_account*.json
+token*.json
+*.sqlite
+*.sqlite3
+*.db
+
+# Allow environment templates
+!.env.example
+!*.env.example
+!**/.env.example
+
+# Mobile & Expo / Flutter temporary caches & build files
+.expo/
+**/.expo/
+.dart_tool/
+**/.dart_tool/
+.flutter-plugins*
+**/.flutter-plugins*
+.pub-cache/
+.pub/
+.packages
+
+# Scratch & local note files
+updatefile.txt
+*.log
 
 # Backend dynamic folders / uploads / temp files
 backend/uploads/*

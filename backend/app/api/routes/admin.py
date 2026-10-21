@@ -6,12 +6,13 @@ import shutil
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.config import UPLOADS_DIR
+from app.core.config import UPLOADS_DIR, API_BASE_URL
 from app.database.database import get_db
 from app.database.models.user import User
 from app.database.models.invoice import Bill
 from app.database.models.system_activity import SystemActivity
 from app.api.dependencies import require_admin
+
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -213,7 +214,8 @@ async def get_admin_invoices(db: Session = Depends(get_db)):
         if bill.image_url:
             image_url = bill.image_url
             if not image_url.startswith("http"):
-                image_url = f"http://localhost:8000/uploads/{image_url.split('/')[-1]}"
+                image_url = f"{API_BASE_URL}/uploads/{image_url.split('/')[-1]}"
+
         result.append({
             "id": bill.id,
             "merchant": bill.merchant_name or "Unknown Merchant",
@@ -497,8 +499,9 @@ async def get_admin_api_analytics(db: Session = Depends(get_db)):
     endpoints_docs = [
         {
             "method": "POST",
-            "path": "/api/invoices/process",
-            "description": "Upload and process an invoice using AI model",
+            "path": "/process/document",
+            "description": "Upload and process an invoice using AI model (alias: /api/invoices/process)",
+
             "headers": [
                 {"key": "Authorization", "value": "Bearer <access_token>", "required": True},
                 {"key": "Content-Type", "value": "multipart/form-data", "required": True}

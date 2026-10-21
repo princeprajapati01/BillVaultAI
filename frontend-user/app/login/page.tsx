@@ -4,6 +4,8 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { Mail, Lock, Eye, EyeOff, Sparkles, Chrome, Apple, User } from 'lucide-react'
+import { API_URL } from '@/lib/api'
+
 
 export default function LoginScreen() {
   const router = useRouter()
@@ -47,7 +49,7 @@ export default function LoginScreen() {
     setLoading(true)
 
     try {
-      const response = await fetch('http://localhost:8000/api/auth/forgot-password', {
+      const response = await fetch(`${API_URL}/api/auth/forgot-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -83,7 +85,7 @@ export default function LoginScreen() {
     setLoading(true)
 
     try {
-      const response = await fetch('http://localhost:8000/api/auth/reset-password', {
+      const response = await fetch(`${API_URL}/api/auth/reset-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -94,6 +96,7 @@ export default function LoginScreen() {
           new_password: newPassword
         }),
       })
+
 
       if (!response.ok) {
         const data = await response.json()
@@ -164,7 +167,7 @@ export default function LoginScreen() {
     setLoading(true)
     setError(null)
     try {
-      const response = await fetch('http://localhost:8000/api/auth/google', {
+      const response = await fetch(`${API_URL}/api/auth/google`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -206,13 +209,14 @@ export default function LoginScreen() {
         ? { email, password }
         : { name: name || email.split('@')[0], email, password }
 
-      const response = await fetch(`http://localhost:8000${endpoint}`, {
+      const response = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
       })
+
 
       if (!response.ok) {
         const data = await response.json()

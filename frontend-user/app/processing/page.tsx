@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Scan, 
   FileText, 
-  DollarSign, 
+  IndianRupee, 
   Calendar, 
   Hash,
   Receipt,
@@ -15,6 +15,8 @@ import {
   Zap,
   X
 } from 'lucide-react'
+import { API_URL } from '@/lib/api'
+
 
 // Convert dataURL to Blob
 function dataURLtoBlob(dataurl: string) {
@@ -34,7 +36,7 @@ export default function ProcessingScreen() {
   const [steps, setSteps] = useState([
     { id: 1, label: 'Scanning document', icon: Scan, field: 'Document', value: 'Analyzing layout...', status: 'waiting' },
     { id: 2, label: 'Extracting merchant', icon: FileText, field: 'Merchant', value: 'Detecting...', status: 'waiting' },
-    { id: 3, label: 'Detecting total amount', icon: DollarSign, field: 'Total', value: 'Calculating...', status: 'waiting' },
+    { id: 3, label: 'Detecting total amount', icon: IndianRupee, field: 'Total', value: 'Calculating...', status: 'waiting' },
     { id: 4, label: 'Extracting GST', icon: Receipt, field: 'GST', value: 'Calculating...', status: 'waiting' },
     { id: 5, label: 'Reading invoice number', icon: Hash, field: 'Invoice #', value: 'Searching...', status: 'waiting' },
     { id: 6, label: 'Detecting date', icon: Calendar, field: 'Date', value: 'Searching...', status: 'waiting' },
@@ -72,7 +74,7 @@ export default function ProcessingScreen() {
         formData.append('file', blob, fileName)
 
         // Call backend API with token auth
-        const response = await fetch('http://localhost:8000/process/document', {
+        const response = await fetch(`${API_URL}/process/document`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`
@@ -111,11 +113,12 @@ export default function ProcessingScreen() {
           }
           pollCount++
 
-          const pollResponse = await fetch(`http://localhost:8000/api/bills/${billId}`, {
+          const pollResponse = await fetch(`${API_URL}/api/bills/${billId}`, {
             headers: {
               'Authorization': `Bearer ${token}`
             }
           })
+
           if (pollResponse.ok) {
             data = await pollResponse.json()
           } else if (pollResponse.status === 404) {
@@ -145,7 +148,7 @@ export default function ProcessingScreen() {
         const completedSteps = [
           { id: 1, label: 'Scanning document', icon: Scan, field: 'Document', value: 'Invoice layout analyzed successfully', status: 'done' },
           { id: 2, label: 'Extracting merchant', icon: FileText, field: 'Merchant', value: vendor, status: 'done' },
-          { id: 3, label: 'Detecting total amount', icon: DollarSign, field: 'Total', value: totalVal, status: 'done' },
+          { id: 3, label: 'Detecting total amount', icon: IndianRupee, field: 'Total', value: totalVal, status: 'done' },
           { id: 4, label: 'Extracting GST', icon: Receipt, field: 'GST', value: gstValStr, status: 'done' },
           { id: 5, label: 'Reading invoice number', icon: Hash, field: 'Invoice #', value: invoiceNo, status: 'done' },
           { id: 6, label: 'Detecting date', icon: Calendar, field: 'Date', value: invoiceDate, status: 'done' },

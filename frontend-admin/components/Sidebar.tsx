@@ -44,7 +44,10 @@ export default function Sidebar() {
   const pathname = usePathname()
   const { isCollapsed, toggleSidebar } = useSidebarStore()
 
+  if (pathname === '/login') return null
+
   return (
+
     <motion.aside
       initial={false}
       animate={{ width: isCollapsed ? 80 : 280 }}
